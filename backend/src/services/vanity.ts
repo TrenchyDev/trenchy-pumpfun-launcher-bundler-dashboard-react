@@ -33,11 +33,12 @@ function writePool(pool: VanityAddress[]) {
   fs.writeFileSync(POOL_FILE, JSON.stringify(pool, null, 2));
 }
 
-export function getPoolStatus(): { available: number; used: number; total: number; generating: boolean } {
+export function getPoolStatus() {
   const pool = readPool();
   const available = pool.filter(a => a.status === 'available').length;
   const used = pool.filter(a => a.status === 'used').length;
-  return { available, used, total: pool.length, generating: isGenerating() };
+  const stats = generating ? getGenerationStats() : null;
+  return { available, used, total: pool.length, generating: isGenerating(), stats };
 }
 
 export function getNextAvailable(): VanityAddress | null {
@@ -64,18 +65,29 @@ export function getKeypairFromPool(publicKey: string): Keypair | null {
 
 let workers: Worker[] = [];
 let generating = false;
+let totalChecked = 0;
+let totalFound = 0;
+let generationStartedAt = 0;
 
 export function isGenerating(): boolean {
   return generating;
 }
 
+export function getGenerationStats(): { checked: number; found: number; elapsed: number; rate: number } {
+  const elapsed = generating ? (Date.now() - generationStartedAt) / 1000 : 0;
+  const rate = elapsed > 0 ? Math.round(totalChecked / elapsed) : 0;
+  return { checked: totalChecked, found: totalFound, elapsed: Math.round(elapsed), rate };
+}
+
 export function startGenerator(suffix: string = 'pump'): { started: boolean; workerCount: number } {
   if (generating) return { started: false, workerCount: workers.length };
 
-  const cpuCount = os.cpus().length;
-  const workerCount = Math.max(1, Math.floor(cpuCount / 2));
+  const workerCount = 16;
 
   generating = true;
+  totalChecked = 0;
+  totalFound = 0;
+  generationStartedAt = Date.now();
 
   for (let i = 0; i < workerCount; i++) {
     const worker = new Worker(WORKER_PATH, {
@@ -83,7 +95,12 @@ export function startGenerator(suffix: string = 'pump'): { started: boolean; wor
     });
 
     worker.on('message', (msg: any) => {
+      if (msg.progress) {
+        totalChecked += msg.attempts;
+      }
       if (msg.success) {
+        totalChecked += msg.attempts;
+        totalFound++;
         const kp = msg.keypair;
         const secretKey = bs58.encode(Buffer.from(kp.secretKey));
         const addr: VanityAddress = {

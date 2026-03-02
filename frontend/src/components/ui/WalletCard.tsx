@@ -68,17 +68,21 @@ export default function WalletCard({ wallet: w, isSelling, buyingKey, onSell, on
             {[0.1, 0.25, 0.5].map(amt => {
               const k = `${w.id}-${amt}`
               const busy = buyingKey === k
+              const cantAfford = w.solBalance < amt
+              const isDisabled = busy || !!buyingKey || cantAfford
               return (
                 <button key={amt}
-                  disabled={busy || !!buyingKey}
+                  disabled={isDisabled}
                   onClick={() => onBuy(w.id, amt)}
                   style={{
                     padding: '3px 0', fontSize: 9, fontWeight: 700, borderRadius: 4,
-                    border: 'none', cursor: busy ? 'wait' : 'pointer',
+                    border: 'none',
+                    cursor: isDisabled ? (busy ? 'wait' : 'not-allowed') : 'pointer',
                     background: 'rgba(16,185,129,0.1)', color: '#34d399',
+                    opacity: isDisabled ? 0.3 : 1,
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(16,185,129,0.25)')}
+                  onMouseEnter={e => { if (!isDisabled) e.currentTarget.style.background = 'rgba(16,185,129,0.25)' }}
                   onMouseLeave={e => (e.currentTarget.style.background = 'rgba(16,185,129,0.1)')}>
                   {busy ? '...' : `${amt}`}
                 </button>

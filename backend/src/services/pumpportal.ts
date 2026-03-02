@@ -74,7 +74,7 @@ class PumpPortalTracker {
     } catch {}
   }
 
-  private formatTrade(raw: any): FormattedTrade | null {
+  private formatTrade(raw: any): { trade: FormattedTrade; replacesInjected: boolean } | null {
     if (!raw.txType || raw.txType === 'create' || raw.txType === 'migrate') return null;
     const sig = raw.signature;
     if (!sig || this.seenSigs.has(sig)) return null;
@@ -84,10 +84,14 @@ class PumpPortalTracker {
     const mint = raw.mint || '';
     const txType = raw.txType as string;
 
-    // Only block duplicate buys from injected wallets — let sells through
+    let replacesInjected = false;
     if (txType === 'buy') {
       const injectedSet = this.injectedWallets.get(mint);
-      if (injectedSet?.has(trader)) return null;
+      if (injectedSet?.has(trader)) {
+        replacesInjected = true;
+        injectedSet.delete(trader);
+        if (injectedSet.size === 0) this.injectedWallets.delete(mint);
+      }
     }
 
     this.seenSigs.add(sig);
@@ -97,19 +101,22 @@ class PumpPortalTracker {
       : (raw.sell || raw.tokenAmount || 0);
 
     return {
-      signature: sig,
-      mint,
-      type: raw.txType,
-      trader,
-      traderShort: trader ? `${trader.slice(0, 4)}...${trader.slice(-4)}` : '???',
-      solAmount: solAmt,
-      tokenAmount: tokenAmt,
-      marketCapSol: raw.marketCapSol || null,
-      timestamp: raw.timestamp || Date.now(),
-      isOurWallet: !!walletInfo,
-      walletType: walletInfo?.type || null,
-      walletLabel: walletInfo?.label || null,
-      pool: raw.pool || null,
+      trade: {
+        signature: sig,
+        mint,
+        type: raw.txType,
+        trader,
+        traderShort: trader ? `${trader.slice(0, 4)}...${trader.slice(-4)}` : '???',
+        solAmount: solAmt,
+        tokenAmount: tokenAmt,
+        marketCapSol: raw.marketCapSol || null,
+        timestamp: raw.timestamp || Date.now(),
+        isOurWallet: !!walletInfo,
+        walletType: walletInfo?.type || null,
+        walletLabel: walletInfo?.label || null,
+        pool: raw.pool || null,
+      },
+      replacesInjected,
     };
   }
 
@@ -133,9 +140,24 @@ class PumpPortalTracker {
       try {
         const msg = JSON.parse(data.toString());
         if (msg.txType) {
-          const trade = this.formatTrade(msg);
-          if (trade && trade.mint === this.subscribedMint) {
-            this.trades.unshift(trade);
+          const result = this.formatTrade(msg);
+          if (result && result.trade.mint === this.subscribedMint) {
+            const { trade, replacesInjected } = result;
+            if (replacesInjected) {
+              const idx = this.trades.findIndex(
+                t => t.trader === trade.trader && t.mint === trade.mint && t.type === 'buy' && t.isOurWallet,
+              );
+              if (idx !== -1) {
+                trade.walletType = this.trades[idx].walletType;
+                trade.walletLabel = this.trades[idx].walletLabel;
+                trade.isOurWallet = true;
+                this.trades[idx] = trade;
+              } else {
+                this.trades.unshift(trade);
+              }
+            } else {
+              this.trades.unshift(trade);
+            }
             if (this.trades.length > MAX_TRADES) this.trades.length = MAX_TRADES;
             for (const cb of this.listeners) cb(trade);
           }
@@ -291,6 +313,17 @@ class PumpPortalTracker {
 
     for (const t of trades) {
       if (t.mint !== mint || this.seenSigs.has(t.signature)) continue;
+
+      const existingIdx = this.trades.findIndex(
+        ex => ex.trader === t.trader && ex.mint === mint && ex.type === 'buy',
+      );
+      if (existingIdx !== -1) {
+        this.trades[existingIdx].walletType = t.walletType;
+        this.trades[existingIdx].walletLabel = t.walletLabel;
+        this.trades[existingIdx].isOurWallet = true;
+        continue;
+      }
+
       injectedSet.add(t.trader);
       this.seenSigs.add(t.signature);
       this.trades.unshift(t);

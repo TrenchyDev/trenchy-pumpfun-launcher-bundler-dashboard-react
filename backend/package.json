@@ -9,10 +9,13 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@google/genai": "^1.35.0",
     "@coral-xyz/anchor": "^0.31.1",
     "@pump-fun/pump-sdk": "^1.29.0",
+    "@solana-ipfs/sdk": "^1.0.10",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.2",
+    "@validator-lut-sdk/v3": "^1.9.11",
     "axios": "^1.13.6",
     "bn.js": "^5.2.2",
     "bs58": "^6.0.0",

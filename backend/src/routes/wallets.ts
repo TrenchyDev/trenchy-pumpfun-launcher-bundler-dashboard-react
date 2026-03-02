@@ -23,6 +23,28 @@ router.get('/', (req: Request, res: Response) => {
   res.json(wallets);
 });
 
+router.get('/available', (_req: Request, res: Response) => {
+  try {
+    res.json(vault.listAvailable());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/imported', (_req: Request, res: Response) => {
+  try {
+    res.json(vault.listImported());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/imported/:id', (req: Request, res: Response) => {
+  const deleted = vault.deleteImported(String(req.params.id));
+  if (!deleted) return res.status(404).json({ error: 'Not found' });
+  res.json({ deleted: true });
+});
+
 router.get('/funding', async (_req: Request, res: Response) => {
   try {
     const kp = solana.getFundingKeypair();
@@ -53,8 +75,7 @@ router.post('/import', (req: Request, res: Response) => {
 
 router.post('/refresh-balances', async (req: Request, res: Response) => {
   const { ids } = req.body;
-  // When specific IDs are given, search all wallets (including archived)
-  const wallets = ids ? vault.listWallets({}) : vault.listWallets({ status: 'active' });
+  const wallets = ids ? [...vault.listWallets({}), ...vault.listImported()] : vault.listWallets({ status: 'active' });
   const toRefresh = ids
     ? wallets.filter(w => (ids as string[]).includes(w.id))
     : wallets;
@@ -91,7 +112,10 @@ router.post('/archive-all', (req: Request, res: Response) => {
   const { type } = req.body;
   const params: Record<string, string> = { status: 'active' };
   if (type && type !== 'all') params.type = type;
-  const wallets = vault.listWallets(params).filter(w => w.type !== 'funding');
+  let wallets = vault.listWallets(params).filter(w => w.type !== 'funding');
+  if (!type || type === 'all') {
+    wallets = wallets.filter(w => w.type !== 'manual');
+  }
   let archived = 0;
   for (const w of wallets) {
     if (vault.archiveWallet(w.id)) archived++;
@@ -129,35 +153,39 @@ router.post('/balances', async (req: Request, res: Response) => {
     solBalances = pubkeys.map(() => 0);
   }
 
-  // Token balances — process in chunks of 5 to avoid rate limits
-  const CHUNK_SIZE = 5;
-  const tokenData: { tokenBalance: number; tokenRaw: string }[] = new Array(wallets.length).fill({ tokenBalance: 0, tokenRaw: '0' });
+  // Token balances — use getTokenAccountsByOwner to find ALL token accounts
+  // for the given mint in a single RPC call per wallet (handles any token program).
+  const tokenData: { tokenBalance: number; tokenRaw: string }[] = Array.from(
+    { length: wallets.length },
+    () => ({ tokenBalance: 0, tokenRaw: '0' }),
+  );
 
-  for (let i = 0; i < wallets.length; i += CHUNK_SIZE) {
-    const chunk = wallets.slice(i, i + CHUNK_SIZE);
-    const chunkResults = await Promise.all(
-      chunk.map(async (w) => {
-        const pubkey = new PublicKey(w.publicKey);
-        try {
-          const ata2022 = getAssociatedTokenAddressSync(mintPubkey, pubkey, true, TOKEN_2022_PROGRAM_ID);
-          const ataLegacy = getAssociatedTokenAddressSync(mintPubkey, pubkey, true, TOKEN_PROGRAM_ID);
-          const info2022 = await conn.getAccountInfo(ata2022);
-          const infoLegacy = info2022 ? null : await conn.getAccountInfo(ataLegacy);
-          const ata = info2022 ? ata2022 : (infoLegacy ? ataLegacy : null);
-          if (ata) {
-            const bal = await conn.getTokenAccountBalance(ata);
-            return { tokenBalance: Number(bal.value.uiAmount || 0), tokenRaw: bal.value.amount };
-          }
-        } catch (err: unknown) {
-          // TokenAccountNotFoundError when ATA was closed (e.g. sold 100%) — treat as 0
-        }
-        return { tokenBalance: 0, tokenRaw: '0' };
-      }),
-    );
-    for (let j = 0; j < chunkResults.length; j++) {
-      tokenData[i + j] = chunkResults[j];
+  console.log(`[balances] Fetching token balances for ${wallets.length} wallets, mint=${mint}`);
+
+  for (let i = 0; i < wallets.length; i++) {
+    const w = wallets[i];
+    const pubkey = new PublicKey(w.publicKey);
+    try {
+      const ataLegacy = getAssociatedTokenAddressSync(mintPubkey, pubkey, true, TOKEN_PROGRAM_ID);
+      const bal = await conn.getTokenAccountBalance(ataLegacy);
+      const amount = Number(bal.value.uiAmount || 0);
+      tokenData[i] = { tokenBalance: amount, tokenRaw: bal.value.amount };
+      if (amount > 0) console.log(`[balances] ${w.type} ${w.publicKey.slice(0,8)}... has ${amount} tokens`);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (!msg.includes('could not find account') && !msg.includes('Invalid param') && !msg.includes('AccountNotFound')) {
+        console.log(`[balances] Legacy ATA error for ${w.type} ${w.publicKey.slice(0,8)}...: ${msg.slice(0,120)}`);
+      }
+      try {
+        const ata2022 = getAssociatedTokenAddressSync(mintPubkey, pubkey, true, TOKEN_2022_PROGRAM_ID);
+        const bal = await conn.getTokenAccountBalance(ata2022);
+        const amount = Number(bal.value.uiAmount || 0);
+        tokenData[i] = { tokenBalance: amount, tokenRaw: bal.value.amount };
+        if (amount > 0) console.log(`[balances] ${w.type} ${w.publicKey.slice(0,8)}... has ${amount} tokens (2022)`);
+      } catch {
+        // No token account found for this wallet
+      }
     }
-    if (i + CHUNK_SIZE < wallets.length) await new Promise(r => setTimeout(r, 200));
   }
 
   let results = wallets.map((w, idx) => ({

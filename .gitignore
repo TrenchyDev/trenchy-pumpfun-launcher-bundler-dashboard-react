@@ -4,6 +4,8 @@ dist/
 .env.*
 
 # Wallet keys, launch data, trade history — all sensitive
+backend/keys/
+!backend/keys/.gitkeep
 backend/data/
 !backend/data/.gitkeep
 

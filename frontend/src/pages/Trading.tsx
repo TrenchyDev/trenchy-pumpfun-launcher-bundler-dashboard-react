@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import axios from 'axios'
-import { ArrowPathIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import type { Launch, AllLaunch, WalletBalance, LiveTrade, RapidSellSummary, LaunchStage, CloseoutResult } from '../types'
 import { fmtSol, fmtTokens, fmtPct, BADGE_COLORS } from '../types'
 import ExternalLinks from '../components/ui/ExternalLinks'
@@ -10,6 +11,100 @@ import LiveTradesPanel from '../components/ui/LiveTradesPanel'
 import BulkSellBar from '../components/ui/BulkSellBar'
 import WalletCard from '../components/ui/WalletCard'
 import LaunchHistory from '../components/ui/LaunchHistory'
+import Tip from '../components/ui/Tip'
+
+function SmartActionButton({ closingOut, activeMint, showCloseoutButton, totalTokens, maxTotalTokens, selectedLaunchId, onCollectFees, onCollectCreatorFees, onCloseOut, onSweep }: {
+  closingOut: boolean; activeMint: string; showCloseoutButton: boolean; totalTokens: number; maxTotalTokens: number; selectedLaunchId?: string;
+  onCollectFees: () => void; onCollectCreatorFees: () => void; onCloseOut: () => void; onSweep: () => void;
+}) {
+  const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
+
+  const toggleMenu = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect()
+      setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+    }
+    setOpen(v => !v)
+  }
+
+  const is95Sold = showCloseoutButton
+  const allSold = totalTokens === 0 && maxTotalTokens > 0
+  const primaryAction = is95Sold
+    ? { label: closingOut ? 'Closing Out...' : 'Close Out Run', handler: onCloseOut, color: '#14b8a6', bg: 'rgba(20,184,166,0.15)', border: 'rgba(20,184,166,0.3)' }
+    : allSold
+      ? { label: closingOut ? 'Sweeping...' : 'Sweep to Funding', handler: onSweep, color: '#818cf8', bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)' }
+      : { label: closingOut ? 'Collecting...' : 'Collect Fees', handler: selectedLaunchId ? onCollectFees : onCollectCreatorFees, color: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.25)' }
+
+  const dropdownItems = [
+    { label: 'Collect Fees', desc: 'Claim creator fees only — no selling or sweeping', handler: selectedLaunchId ? onCollectFees : onCollectCreatorFees },
+    { label: 'Close Out Run', desc: 'Sell remaining, collect fees, sweep all SOL to funding', handler: onCloseOut },
+    { label: 'Sweep to Funding', desc: 'Move all SOL from wallets back to funding', handler: onSweep },
+  ].filter(item => item.label !== primaryAction.label)
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      <button
+        disabled={closingOut || !activeMint}
+        onClick={primaryAction.handler}
+        style={{
+          fontSize: 10, fontWeight: 700, padding: '5px 14px',
+          borderRadius: '6px 0 0 6px',
+          border: `1px solid ${primaryAction.border}`,
+          borderRight: 'none',
+          background: primaryAction.bg, color: primaryAction.color,
+          cursor: closingOut ? 'wait' : 'pointer',
+          opacity: closingOut || !activeMint ? 0.5 : 1,
+        }}>
+        {primaryAction.label}
+      </button>
+      <button
+        ref={btnRef}
+        disabled={closingOut}
+        onClick={toggleMenu}
+        style={{
+          padding: '5px 6px',
+          borderRadius: '0 6px 6px 0',
+          border: `1px solid ${primaryAction.border}`,
+          background: primaryAction.bg, color: primaryAction.color,
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center',
+        }}>
+        <ChevronDownIcon style={{ width: 10, height: 10 }} />
+      </button>
+      {open && menuPos && createPortal(
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 99998 }}
+            onClick={() => setOpen(false)} />
+          <div style={{
+            position: 'fixed', top: menuPos.top, right: menuPos.right,
+            background: '#1e293b', border: '1px solid rgba(51,65,85,0.8)',
+            borderRadius: 8, padding: 4, zIndex: 99999, minWidth: 220,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          }}>
+            {dropdownItems.map(item => (
+              <button key={item.label}
+                onClick={() => { setOpen(false); item.handler() }}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '8px 12px', borderRadius: 6, border: 'none',
+                  background: 'transparent', cursor: 'pointer',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(51,65,85,0.5)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', marginBottom: 2 }}>{item.label}</div>
+                <div style={{ fontSize: 9, color: '#64748b', lineHeight: 1.3 }}>{item.desc}</div>
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </div>
+  )
+}
 
 export default function Trading() {
   const location = useLocation()
@@ -208,12 +303,15 @@ export default function Trading() {
         } else if (data.type === 'trade' && data.trade) {
           setLiveTrades(prev => {
             const incoming = data.trade as LiveTrade
-            // Only block duplicate buys from injected launch trades — let sells through
             if (incoming.type === 'buy' && !incoming.signature.startsWith('launch:')) {
-              const hasInjectedBuy = prev.some((t: LiveTrade) =>
+              const injIdx = prev.findIndex((t: LiveTrade) =>
                 t.signature.startsWith('launch:') && t.trader === incoming.trader && t.type === 'buy'
               )
-              if (hasInjectedBuy) return prev
+              if (injIdx !== -1) {
+                const replaced = [...prev]
+                replaced[injIdx] = { ...incoming, walletType: prev[injIdx].walletType, walletLabel: prev[injIdx].walletLabel, isOurWallet: true }
+                return replaced.sort((a: LiveTrade, b: LiveTrade) => b.timestamp - a.timestamp).slice(0, 100)
+              }
             }
             const updated = [incoming, ...prev.filter((t: LiveTrade) => t.signature !== incoming.signature)]
             return updated.sort((a: LiveTrade, b: LiveTrade) => b.timestamp - a.timestamp).slice(0, 100)
@@ -331,32 +429,67 @@ export default function Trading() {
     } finally { setCollectingFees(false) }
   }
 
-  const handleCollectFeesAndRecover = async () => {
+  const handleCollectFeesOnly = async () => {
+    if (!selectedLaunch?.id) return
+    setClosingOut(true)
+    setCloseoutResult(null)
+    try {
+      const feeRes = await axios.post('/api/trading/collect-creator-fees', { launchId: selectedLaunch.id })
+      const collected = feeRes.data?.status === 'confirmed' ? Number(feeRes.data.collectedSol || 0) : 0
+      setCloseoutResult({ fees: collected, recovered: 0, errors: collected > 0 ? 0 : 1 })
+      fetchCreatorFeesAvailable()
+      await fetchBalances()
+    } catch {
+      setCloseoutResult({ fees: 0, recovered: 0, errors: 1 })
+    } finally { setClosingOut(false) }
+  }
+
+  const handleCloseOutRun = async () => {
     if (!activeMint || !walletBalances.length) return
-    if (!confirm('Collect creator fees and recover all SOL from this launch\'s wallets back to funding?')) return
+    if (!confirm('Sell remaining tokens, collect creator fees, and sweep all SOL back to funding?')) return
     setClosingOut(true)
     setCloseoutResult(null)
     let feesCollected = 0
     let totalRecovered = 0
     let errors = 0
     try {
+      if (totalTokens > 0) {
+        try {
+          await axios.post('/api/trading/rapid-sell', {
+            mint: activeMint, percentage: 100,
+            launchId: selectedLaunch?.id, parallel: true,
+          })
+        } catch { /* continue to collect + sweep */ }
+        await new Promise(r => setTimeout(r, 2000))
+      }
       if (selectedLaunch?.id) {
         try {
           const feeRes = await axios.post('/api/trading/collect-creator-fees', { launchId: selectedLaunch.id })
-          if (feeRes.data?.status === 'confirmed') {
-            feesCollected = Number(feeRes.data.collectedSol || 0)
-          }
+          if (feeRes.data?.status === 'confirmed') feesCollected = Number(feeRes.data.collectedSol || 0)
         } catch { /* ignore */ }
       }
-      const gatherRes = await axios.post('/api/wallets/gather', {
-        launchId: selectedLaunch?.id || undefined,
-      })
+      const gatherRes = await axios.post('/api/wallets/gather', { launchId: selectedLaunch?.id || undefined })
       totalRecovered = gatherRes.data?.totalRecovered || 0
       errors = (gatherRes.data?.wallets || []).filter((w: { error?: string }) => w.error).length
       setCloseoutResult({ fees: feesCollected, recovered: totalRecovered, errors })
       await fetchBalances()
-    } catch (err: any) {
+    } catch {
       setCloseoutResult({ fees: feesCollected, recovered: totalRecovered, errors: 1 })
+    } finally { setClosingOut(false) }
+  }
+
+  const handleSweepToFunding = async () => {
+    if (!confirm('Sweep all SOL from this launch\'s wallets back to funding?')) return
+    setClosingOut(true)
+    setCloseoutResult(null)
+    try {
+      const gatherRes = await axios.post('/api/wallets/gather', { launchId: selectedLaunch?.id || undefined })
+      const totalRecovered = gatherRes.data?.totalRecovered || 0
+      const errors = (gatherRes.data?.wallets || []).filter((w: { error?: string }) => w.error).length
+      setCloseoutResult({ fees: 0, recovered: totalRecovered, errors })
+      await fetchBalances()
+    } catch {
+      setCloseoutResult({ fees: 0, recovered: 0, errors: 1 })
     } finally { setClosingOut(false) }
   }
 
@@ -512,12 +645,9 @@ export default function Trading() {
         launchStages={launchStages}
         launchError={launchError}
         launchResult={launchResult}
-        showCloseoutButton={!!showCloseoutButton}
-        closingOut={closingOut}
-        closeoutResult={closeoutResult}
+        actionResult={closeoutResult}
         onDismissLaunch={() => { setLaunchStages([]); setLaunchError(null); setLaunchResult(null); setActiveLaunchId(null) }}
-        onCollectAndRecover={handleCollectFeesAndRecover}
-        onDismissCloseout={() => setCloseoutResult(null)}
+        onDismissResult={() => setCloseoutResult(null)}
       />
 
       {/* Top row: Chart + Live Trades */}
@@ -565,7 +695,7 @@ export default function Trading() {
       <div className="card-flat" style={{ padding: '10px 14px', marginBottom: 12 }}>
         {/* Row 1: Header + Portfolio + Refresh */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: walletBalances.length > 0 ? 10 : 0, flexWrap: 'wrap' }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: 0 }}>Wallets</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: '#fff', margin: 0, display: 'flex', alignItems: 'center' }}>Wallets<Tip text="Your launch wallets (Dev, Bundle, Sniper, Holder). Each wallet can buy and sell tokens independently." /></h3>
           {walletBalances.length > 0 && (
             <>
               <div style={{ width: 1, height: 16, background: 'rgba(37,51,70,0.5)' }} />
@@ -595,45 +725,49 @@ export default function Trading() {
           </button>
         </div>
 
-        {/* Creator Fees row */}
-        {selectedLaunch?.id && creatorFeesAvailable !== null && (
+        {/* Creator Fees + Smart Action Button */}
+        {walletBalances.length > 0 && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-            marginBottom: walletBalances.length > 0 ? 10 : 0,
+            marginBottom: 10,
             padding: '6px 12px', borderRadius: 8,
-            background: creatorFeesAvailable > 0 ? 'rgba(52,211,153,0.06)' : 'rgba(15,23,42,0.3)',
-            border: `1px solid ${creatorFeesAvailable > 0 ? 'rgba(52,211,153,0.2)' : 'rgba(37,51,70,0.3)'}`,
+            background: 'rgba(15,23,42,0.3)',
+            border: '1px solid rgba(37,51,70,0.3)',
           }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-              Creator Fees
-            </span>
-            <span className="font-mono" style={{
-              fontSize: 13, fontWeight: 800,
-              color: creatorFeesAvailable > 0 ? '#34d399' : '#475569',
-            }}>
-              {creatorFeesAvailable > 0 ? `${creatorFeesAvailable.toFixed(6)} SOL` : 'None'}
-            </span>
-            <button className="btn-secondary" style={{
-              fontSize: 10, padding: '4px 12px', fontWeight: 700,
-              background: creatorFeesAvailable > 0
-                ? (needsFunding ? 'rgba(251,191,36,0.12)' : 'rgba(52,211,153,0.12)')
-                : undefined,
-              borderColor: creatorFeesAvailable > 0
-                ? (needsFunding ? 'rgba(251,191,36,0.25)' : 'rgba(52,211,153,0.25)')
-                : undefined,
-              color: creatorFeesAvailable > 0
-                ? (needsFunding ? '#fbbf24' : '#34d399')
-                : undefined,
-            }}
-              disabled={collectingFees || creatorFeesAvailable === 0}
-              onClick={handleCollectCreatorFees}>
-              {collectingFees
-                ? (needsFunding ? 'Funding & Collecting...' : 'Collecting...')
-                : (needsFunding && creatorFeesAvailable > 0
-                  ? 'Collect (via Funding)'
-                  : 'Collect → Funding')}
-            </button>
+            {/* Creator Fees display */}
+            {selectedLaunch?.id && creatorFeesAvailable !== null && (
+              <>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  Fees
+                </span>
+                <Tip text="Creator fees earned from trading activity on your token. These accumulate on-chain and can be collected anytime without selling." />
+                <span className="font-mono" style={{
+                  fontSize: 13, fontWeight: 800,
+                  color: creatorFeesAvailable > 0 ? '#34d399' : '#475569',
+                }}>
+                  {creatorFeesAvailable > 0 ? `${creatorFeesAvailable.toFixed(6)} SOL` : '0'}
+                </span>
+                <div style={{ width: 1, height: 16, background: 'rgba(37,51,70,0.5)' }} />
+              </>
+            )}
+
             {collectFeesMsg && <span style={{ fontSize: 10, color: '#94a3b8' }}>{collectFeesMsg}</span>}
+
+            <div style={{ flex: 1 }} />
+
+            {/* Smart Action Split Button */}
+            <SmartActionButton
+              closingOut={closingOut}
+              activeMint={activeMint}
+              showCloseoutButton={!!showCloseoutButton}
+              totalTokens={totalTokens}
+              maxTotalTokens={maxTotalTokens}
+              selectedLaunchId={selectedLaunch?.id}
+              onCollectFees={handleCollectFeesOnly}
+              onCollectCreatorFees={handleCollectCreatorFees}
+              onCloseOut={handleCloseOutRun}
+              onSweep={handleSweepToFunding}
+            />
           </div>
         )}
 

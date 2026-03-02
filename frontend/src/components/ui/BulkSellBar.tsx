@@ -1,5 +1,6 @@
 import type { WalletBalance, RapidSellSummary } from '../../types'
 import { BADGE_COLORS } from '../../types'
+import Tip from './Tip'
 
 interface Props {
   walletBalances: WalletBalance[]
@@ -31,9 +32,10 @@ export default function BulkSellBar({
         <span style={{
           fontSize: 10, fontWeight: 800, color: '#fb7185', textTransform: 'uppercase', letterSpacing: 1,
           padding: '3px 10px', borderRadius: 4, background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)',
-          alignSelf: 'center', lineHeight: '16px',
+          alignSelf: 'center', lineHeight: '16px', display: 'inline-flex', alignItems: 'center',
         }}>
           SELL
+          <Tip text="Sell tokens from all wallets at once. Pick a wallet group (All, Dev, Bundle, etc.) and choose a percentage to sell." width={200} />
         </span>
         {GROUPS.map(group => {
           const isGroupSelling = rapidSelling && sellGroup === (group.types ? group.types.join(',') : 'all')

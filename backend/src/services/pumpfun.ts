@@ -247,7 +247,7 @@ export interface SellParams {
 
 export async function buildSellIxs(
   params: SellParams,
-): Promise<TransactionInstruction[]> {
+): Promise<{ instructions: TransactionInstruction[]; solAmount: BN }> {
   const sdk = getOnlineSdk();
   const global = await sdk.fetchGlobal();
   const feeConfig = await sdk.fetchFeeConfig();
@@ -294,7 +294,7 @@ export async function buildSellIxs(
     mayhemMode: false,
   });
 
-  return instructions;
+  return { instructions, solAmount };
 }
 
 export async function fetchGlobalState() {

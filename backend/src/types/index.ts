@@ -30,4 +30,7 @@ export interface LaunchParams {
   useJito: boolean;
   useLUT: boolean;
   strictBundle: boolean;
+  devWalletId?: string;
+  bundleWalletIds?: (string | null)[];
+  holderWalletIds?: (string | null)[];
 }

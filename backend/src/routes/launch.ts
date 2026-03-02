@@ -103,6 +103,9 @@ router.post('/', async (req: Request, res: Response) => {
     strictBundle = true,
     mintAddressMode = 'random',
     vanityMintPublicKey = '',
+    devWalletId,
+    bundleWalletIds,
+    holderWalletIds,
   } = req.body;
 
   if (!tokenName || !tokenSymbol) {
@@ -142,6 +145,9 @@ router.post('/', async (req: Request, res: Response) => {
     strictBundle,
     mintAddressMode,
     vanityMintPublicKey,
+    devWalletId: devWalletId || undefined,
+    bundleWalletIds: bundleWalletIds || undefined,
+    holderWalletIds: holderWalletIds || undefined,
   }, { readLaunches, saveLaunch, emit }).catch(err => {
     console.error('[Launch] Fatal error:', err);
   });

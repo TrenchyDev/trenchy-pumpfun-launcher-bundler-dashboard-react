@@ -129,11 +129,12 @@ router.post('/execute', async (req: Request, res: Response) => {
       });
     } else {
       const tokenAmount = new BN(Math.round(Number(amount) * 1e6));
-      instructions = await pumpfun.buildSellIxs({
+      const sellResult = await pumpfun.buildSellIxs({
         mint: mintPubkey,
         seller: keypair.publicKey,
         tokenAmount,
       });
+      instructions = sellResult.instructions;
     }
 
     const tx = pumpfun.buildVersionedTx(keypair.publicKey, instructions, blockhash);
@@ -246,7 +247,7 @@ router.post('/rapid-sell', async (req: Request, res: Response) => {
         return { wallet: w.publicKey, status: 'skipped', reason: 'sell amount is zero' };
       }
 
-      const instructions = await pumpfun.buildSellIxs({
+      const { instructions, solAmount: expectedSolOut } = await pumpfun.buildSellIxs({
         mint: mintPubkey,
         seller: keypair.publicKey,
         tokenAmount: sellAmount,
@@ -258,13 +259,12 @@ router.post('/rapid-sell', async (req: Request, res: Response) => {
 
       const sig = await conn.sendTransaction(tx, { skipPreflight: true });
 
-      // Inject into live feed immediately so it shows up in the UI
       tracker.injectTrade(buildLiveTrade({
         signature: sig,
         mint,
         type: 'sell',
         trader: keypair.publicKey.toBase58(),
-        solAmount: 0,
+        solAmount: expectedSolOut.toNumber() / 1e9,
         tokenAmount: Number(sellAmount.toString()) / 1e6,
         walletType: w.type,
         walletLabel: w.label,
@@ -501,15 +501,21 @@ router.get('/all-unclaimed-fees', async (_req: Request, res: Response) => {
     createdAt: string;
   }[] = [];
 
+  console.log(`[AllFees] Scanning ${launches.length} confirmed launches for fees...`);
   for (const launch of launches) {
     const devWallets = vault.listWallets({ type: 'dev' }).filter(w => w.launchId === launch.id);
-    if (devWallets.length === 0) continue;
+    if (devWallets.length === 0) {
+      console.log(`[AllFees] ${launch.tokenSymbol} (${launch.id.slice(0,8)}): no dev wallet found, skipping`);
+      continue;
+    }
 
     const devWallet = devWallets.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
     try {
       const keypair = vault.getKeypair(devWallet.id);
+      console.log(`[AllFees] ${launch.tokenSymbol}: checking creator vault for ${keypair.publicKey.toBase58().slice(0,8)}...`);
       const balance = await suppressSdkWarns(() => sdk.getCreatorVaultBalanceBothPrograms(keypair.publicKey));
       const availableSol = Number(balance.toString()) / LAMPORTS_PER_SOL;
+      console.log(`[AllFees] ${launch.tokenSymbol}: ${availableSol.toFixed(6)} SOL available`);
       results.push({
         launchId: launch.id,
         tokenName: launch.tokenName,
@@ -520,7 +526,7 @@ router.get('/all-unclaimed-fees', async (_req: Request, res: Response) => {
         createdAt: launch.createdAt,
       });
     } catch (err: unknown) {
-      console.error(`[AllFees] Error checking ${launch.tokenName}:`, err instanceof Error ? err.message : err);
+      console.error(`[AllFees] ${launch.tokenSymbol} ERROR:`, err instanceof Error ? err.message : err);
     }
     // Small delay to avoid RPC rate limits
     await new Promise(r => setTimeout(r, 200));

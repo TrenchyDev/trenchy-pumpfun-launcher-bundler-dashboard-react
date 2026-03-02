@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
-dotenv.config({ path: path.join(__dirname, '../../.env') });
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
 import express from 'express';
 import cors from 'cors';
@@ -15,6 +15,8 @@ import tradingRoutes from './routes/trading';
 import uploadRoutes from './routes/upload';
 import liveTradesRoutes from './routes/live-trades';
 import vanityRoutes from './routes/vanity';
+import envRoutes from './routes/env';
+import aiRoutes from './routes/ai';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -34,6 +36,8 @@ app.use('/api/trading', tradingRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/live-trades', liveTradesRoutes);
 app.use('/api/vanity', vanityRoutes);
+app.use('/api/env', envRoutes);
+app.use('/api/ai', aiRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

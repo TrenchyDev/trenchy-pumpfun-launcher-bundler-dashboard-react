@@ -1,21 +1,18 @@
 import { NavLink } from 'react-router-dom'
-import { RocketLaunchIcon, ChartBarIcon, WalletIcon, SignalIcon } from '@heroicons/react/24/outline'
+import { RocketLaunchIcon, ChartBarIcon, WalletIcon, Cog6ToothIcon, SignalIcon } from '@heroicons/react/24/outline'
 
 const links = [
   { to: '/launch', label: 'Launch', Icon: RocketLaunchIcon },
   { to: '/trading', label: 'Trading', Icon: ChartBarIcon },
   { to: '/wallets', label: 'Wallets', Icon: WalletIcon },
+  { to: '/settings', label: 'Settings', Icon: Cog6ToothIcon },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ envWarning = false }: { envWarning?: boolean }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <div className="sidebar-logo-icon">P</div>
-        <div>
-          <div className="sidebar-logo-text">Pump Launcher</div>
-          <div className="sidebar-logo-sub">Token Deployer</div>
-        </div>
+        <img src="/image/trencherlogo.png" alt="Trencher" style={{ height: 36, width: 'auto', objectFit: 'contain' }} />
       </div>
 
       <nav style={{ flex: 1, padding: '12px 0' }}>
@@ -27,6 +24,13 @@ export default function Sidebar() {
           >
             <link.Icon style={{ width: 18, height: 18 }} />
             {link.label}
+            {link.to === '/settings' && envWarning && (
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: '#ef4444', marginLeft: 'auto', flexShrink: 0,
+                boxShadow: '0 0 8px rgba(239,68,68,0.5)',
+              }} />
+            )}
           </NavLink>
         ))}
       </nav>

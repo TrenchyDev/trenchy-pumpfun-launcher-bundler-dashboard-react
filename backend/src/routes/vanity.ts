@@ -1,7 +1,13 @@
 import { Router } from 'express';
+import { Keypair } from '@solana/web3.js';
 import * as vanity from '../services/vanity';
 
 const router = Router();
+
+router.get('/preview-random', (_req, res) => {
+  const kp = Keypair.generate();
+  res.json({ publicKey: kp.publicKey.toBase58() });
+});
 
 router.get('/pool-status', (_req, res) => {
   try {

@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { PhotoIcon } from '@heroicons/react/24/outline'
+import { PhotoIcon, SparklesIcon } from '@heroicons/react/24/outline'
+import Tip from '../components/ui/Tip'
 
 interface LaunchForm {
   tokenName: string
@@ -23,6 +24,16 @@ interface LaunchForm {
   strictBundle: boolean
   mintAddressMode: 'random' | 'vanity'
   vanityMintPublicKey: string
+  devWalletId: string
+  bundleWalletIds: (string | null)[]
+  holderWalletIds: (string | null)[]
+}
+
+interface AvailableWallet {
+  id: string
+  publicKey: string
+  type: string
+  label: string
 }
 
 interface VanityPoolStatus {
@@ -30,6 +41,7 @@ interface VanityPoolStatus {
   used: number
   total: number
   generating: boolean
+  stats?: { checked: number; found: number; elapsed: number; rate: number } | null
 }
 
 interface VanityAddress {
@@ -37,6 +49,12 @@ interface VanityAddress {
   suffix: string
   status: 'available' | 'used'
   createdAt: string
+}
+
+const fmtNum = (n: number) => {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return String(n)
 }
 
 const DEV_PRESETS = [0.1, 0.25, 0.5, 1.0, 1.5, 2.0]
@@ -65,6 +83,9 @@ export default function Launch() {
     strictBundle: true,
     mintAddressMode: (localStorage.getItem('mintAddressMode') as 'random' | 'vanity') || 'random',
     vanityMintPublicKey: '',
+    devWalletId: '',
+    bundleWalletIds: [null, null, null, null],
+    holderWalletIds: [],
   })
 
   const [launching, setLaunching] = useState(false)
@@ -77,6 +98,14 @@ export default function Launch() {
 
   const [vanityPool, setVanityPool] = useState<VanityPoolStatus>({ available: 0, used: 0, total: 0, generating: false })
   const [vanityAddresses, setVanityAddresses] = useState<VanityAddress[]>([])
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiGenerating, setAiGenerating] = useState(false)
+  const [aiRefFile, setAiRefFile] = useState<File | null>(null)
+  const [aiRefPreview, setAiRefPreview] = useState<string | null>(null)
+  const aiRefInputRef = useRef<HTMLInputElement>(null)
+  const [availableWallets, setAvailableWallets] = useState<AvailableWallet[]>([])
+  const [copiedMint, setCopiedMint] = useState(false)
+  const [randomPreview, setRandomPreview] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchBal = () => { axios.get('/api/wallets/funding').then(r => setFundingBalance(r.data.balance)).catch(() => {}) }
@@ -85,22 +114,29 @@ export default function Launch() {
     return () => clearInterval(iv)
   }, [])
 
+  useEffect(() => {
+    axios.get('/api/wallets/available').then(r => setAvailableWallets(r.data)).catch(() => {})
+    if (form.mintAddressMode === 'random') {
+      axios.get('/api/vanity/preview-random').then(r => setRandomPreview(r.data.publicKey)).catch(() => {})
+    }
+  }, [])
+
   const fetchVanityPool = useCallback(() => {
     axios.get('/api/vanity/pool-status').then(r => setVanityPool(r.data)).catch(() => {})
     axios.get('/api/vanity/pool').then(r => {
       const addrs = (r.data.addresses || []).filter((a: VanityAddress) => a.status === 'available')
       setVanityAddresses(addrs)
-      if (addrs.length > 0 && form.mintAddressMode === 'vanity' && !form.vanityMintPublicKey) {
+      if (addrs.length > 0 && form.mintAddressMode === 'vanity') {
         updateForm({ vanityMintPublicKey: addrs[0].publicKey })
       }
     }).catch(() => {})
-  }, [form.mintAddressMode, form.vanityMintPublicKey])
+  }, [form.mintAddressMode])
 
   useEffect(() => {
     fetchVanityPool()
-    const iv = setInterval(fetchVanityPool, 10_000)
+    const iv = setInterval(fetchVanityPool, vanityPool.generating ? 2_000 : 10_000)
     return () => clearInterval(iv)
-  }, [fetchVanityPool])
+  }, [fetchVanityPool, vanityPool.generating])
 
   const uploadImage = useCallback(async (file: File) => {
     setUploading(true)
@@ -138,12 +174,58 @@ export default function Launch() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const generateWithAi = useCallback(async () => {
+    const prompt = aiPrompt.trim()
+    if (!prompt || aiGenerating) return
+    setAiGenerating(true)
+    setError(null)
+    try {
+      const formData = new FormData()
+      formData.append('prompt', prompt)
+      if (aiRefFile) formData.append('image', aiRefFile)
+      const res = await axios.post<{ name: string; symbol: string; description: string; imageUrl: string }>(
+        '/api/ai/generate-token',
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      )
+      const { name, symbol, description, imageUrl } = res.data
+      updateForm({ tokenName: name, tokenSymbol: symbol, description, imageUrl })
+      if (imageUrl) setImagePreview(imageUrl)
+    } catch (err: unknown) {
+      const msg = err && typeof err === 'object' && 'response' in err && typeof (err as any).response?.data?.error === 'string'
+        ? (err as any).response.data.error
+        : err instanceof Error ? err.message : 'AI generation failed'
+      setError(msg)
+    } finally {
+      setAiGenerating(false)
+    }
+  }, [aiPrompt, aiGenerating, aiRefFile])
+
+  const setAiRef = (file: File | null) => {
+    if (aiRefPreview) URL.revokeObjectURL(aiRefPreview)
+    setAiRefFile(file)
+    setAiRefPreview(file ? URL.createObjectURL(file) : null)
+  }
+
   const updateForm = (updates: Partial<LaunchForm>) =>
     setForm(prev => ({ ...prev, ...updates }))
 
   const setMintMode = (mode: 'random' | 'vanity') => {
     localStorage.setItem('mintAddressMode', mode)
-    updateForm({ mintAddressMode: mode, vanityMintPublicKey: mode === 'random' ? '' : (vanityAddresses[0]?.publicKey || '') })
+    updateForm({ mintAddressMode: mode, vanityMintPublicKey: mode === 'vanity' ? (vanityAddresses[0]?.publicKey || '') : '' })
+    if (mode === 'random') {
+      axios.get('/api/vanity/preview-random').then(r => setRandomPreview(r.data.publicKey)).catch(() => {})
+    }
+  }
+
+  const copyMintAddress = (addr: string) => {
+    navigator.clipboard.writeText(addr)
+    setCopiedMint(true)
+    setTimeout(() => setCopiedMint(false), 1500)
+  }
+
+  const refreshRandomPreview = () => {
+    axios.get('/api/vanity/preview-random').then(r => setRandomPreview(r.data.publicKey)).catch(() => {})
   }
 
   const startVanity = () => {
@@ -174,7 +256,12 @@ export default function Launch() {
     const amounts = Array(count).fill(0.5)
     for (let i = 0; i < Math.min(count, form.bundleSwapAmounts.length); i++)
       amounts[i] = form.bundleSwapAmounts[i]
-    updateForm({ bundleWalletCount: count, bundleSwapAmounts: amounts })
+    const ids: (string | null)[] = Array(count).fill(null)
+    for (let i = 0; i < Math.min(count, form.bundleWalletIds.length); i++)
+      ids[i] = form.bundleWalletIds[i]
+    const extra: Partial<LaunchForm> = { bundleWalletCount: count, bundleSwapAmounts: amounts, bundleWalletIds: ids }
+    if (count > 3) extra.useLUT = true
+    updateForm(extra)
   }
 
   const setBundleAmount = (idx: number, val: number) => {
@@ -187,13 +274,58 @@ export default function Launch() {
     const amounts = Array(count).fill(0.5)
     for (let i = 0; i < Math.min(count, form.holderSwapAmounts.length); i++)
       amounts[i] = form.holderSwapAmounts[i]
-    updateForm({ holderWalletCount: count, holderSwapAmounts: amounts })
+    const ids: (string | null)[] = Array(count).fill(null)
+    for (let i = 0; i < Math.min(count, form.holderWalletIds.length); i++)
+      ids[i] = form.holderWalletIds[i]
+    updateForm({ holderWalletCount: count, holderSwapAmounts: amounts, holderWalletIds: ids })
   }
 
   const setHolderAmount = (idx: number, val: number) => {
     const amounts = [...form.holderSwapAmounts]
     amounts[idx] = val
     updateForm({ holderSwapAmounts: amounts })
+  }
+
+  const setBundleWalletId = (idx: number, id: string | null) => {
+    const ids = [...form.bundleWalletIds]
+    ids[idx] = id
+    updateForm({ bundleWalletIds: ids })
+  }
+
+  const setHolderWalletId = (idx: number, id: string | null) => {
+    const ids = [...form.holderWalletIds]
+    ids[idx] = id
+    updateForm({ holderWalletIds: ids })
+  }
+
+  const selectedIds = new Set([
+    form.devWalletId,
+    ...form.bundleWalletIds.filter(Boolean),
+    ...form.holderWalletIds.filter(Boolean),
+  ].filter(Boolean))
+
+  const walletOptions = (currentId: string | null) =>
+    availableWallets.filter(w => w.id === currentId || !selectedIds.has(w.id))
+
+  const WalletSelect = ({ value, onChange, slot }: { value: string | null; onChange: (id: string | null) => void; slot: string }) => {
+    const opts = walletOptions(value)
+    if (availableWallets.length === 0) return null
+    return (
+      <select
+        className="input font-mono"
+        style={{ padding: '3px 6px', fontSize: 10, maxWidth: 140, color: value ? '#a78bfa' : '#64748b' }}
+        value={value || ''}
+        onChange={e => onChange(e.target.value || null)}
+        title={`Select wallet for ${slot}`}
+      >
+        <option value="">Auto</option>
+        {opts.map(w => (
+          <option key={w.id} value={w.id}>
+            {w.label.length > 12 ? w.label.slice(0, 12) + '…' : w.label} ({w.publicKey.slice(0, 4)}…{w.publicKey.slice(-4)})
+          </option>
+        ))}
+      </select>
+    )
   }
 
   const tipSol = form.useJito ? 0.005 : 0
@@ -210,7 +342,13 @@ export default function Launch() {
     setError(null)
 
     try {
-      const res = await axios.post('/api/launch', form)
+      const payload = {
+        ...form,
+        devWalletId: form.devWalletId || undefined,
+        bundleWalletIds: form.bundleWalletIds.some(Boolean) ? form.bundleWalletIds : undefined,
+        holderWalletIds: form.holderWalletIds.some(Boolean) ? form.holderWalletIds : undefined,
+      }
+      const res = await axios.post('/api/launch', payload)
       const { launchId } = res.data
       navigate('/trading', { state: { launchId, holderAutoBuy: form.holderAutoBuy } })
     } catch (err: unknown) {
@@ -236,12 +374,121 @@ export default function Launch() {
         </button>
       </div>
 
+      {/* Vanity Mint — sleek top bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
+        padding: '8px 14px', borderRadius: 8,
+        background: 'rgba(15,23,42,0.5)', border: '1px solid rgba(37,51,70,0.5)',
+      }}>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#64748b' }}>Mint</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button className={`chip${form.mintAddressMode === 'random' ? ' active' : ''}`}
+            style={{ padding: '3px 10px', fontSize: 10 }} onClick={() => setMintMode('random')}>Random</button>
+          <button className={`chip${form.mintAddressMode === 'vanity' ? ' active' : ''}`}
+            style={{ padding: '3px 10px', fontSize: 10 }} onClick={() => setMintMode('vanity')}>Vanity</button>
+        </div>
+        {form.mintAddressMode === 'vanity' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+            {vanityAddresses.length > 0 ? (
+              <>
+                <span style={{ fontSize: 9, color: '#475569' }}>Next:</span>
+                <span className="font-mono" style={{ fontSize: 11, color: '#14b8a6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                  onClick={() => copyMintAddress(vanityAddresses[0].publicKey)}
+                  title={vanityAddresses[0].publicKey}>
+                  {vanityAddresses[0].publicKey.slice(0, 8)}...{vanityAddresses[0].publicKey.slice(-6)}
+                </span>
+                <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, background: 'rgba(20,184,166,0.12)', color: '#14b8a6' }}>pump</span>
+                <button className="btn-ghost" style={{ fontSize: 9, padding: '2px 6px', color: copiedMint ? '#34d399' : '#475569', flexShrink: 0 }}
+                  onClick={() => copyMintAddress(vanityAddresses[0].publicKey)}>
+                  {copiedMint ? '✓' : 'Copy'}
+                </button>
+              </>
+            ) : (
+              <span style={{ fontSize: 10, color: '#fb7185' }}>No vanity addresses</span>
+            )}
+            {vanityPool.generating && vanityPool.stats ? (
+              <span className="font-mono" style={{ fontSize: 9, color: '#fbbf24', flexShrink: 0, animation: 'pulse 2s ease-in-out infinite', marginLeft: 'auto' }}>
+                {fmtNum(vanityPool.stats.checked)} checked · {fmtNum(vanityPool.stats.rate)}/s · {vanityPool.stats.found} found
+              </span>
+            ) : (
+              <span style={{ fontSize: 10, color: '#475569', marginLeft: 'auto', flexShrink: 0 }}>
+                <span style={{ color: vanityPool.available > 0 ? '#34d399' : '#fb7185', fontWeight: 600 }}>{vanityPool.available}</span> left
+              </span>
+            )}
+            {vanityPool.generating ? (
+              <button className="btn-ghost" style={{ fontSize: 9, color: '#fb7185', padding: '2px 6px', flexShrink: 0 }} onClick={stopVanity}>Stop</button>
+            ) : (
+              <button className="btn-ghost" style={{ fontSize: 9, color: '#14b8a6', padding: '2px 6px', flexShrink: 0 }} onClick={startVanity}>+ Gen</button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+            {randomPreview ? (
+              <>
+                <span style={{ fontSize: 9, color: '#475569' }}>Next:</span>
+                <span className="font-mono" style={{ fontSize: 11, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                  onClick={() => copyMintAddress(randomPreview)}
+                  title={randomPreview}>
+                  {randomPreview.slice(0, 8)}...{randomPreview.slice(-4)}
+                </span>
+                <button className="btn-ghost" style={{ fontSize: 9, padding: '2px 6px', color: copiedMint ? '#34d399' : '#475569', flexShrink: 0 }}
+                  onClick={() => copyMintAddress(randomPreview)}>
+                  {copiedMint ? '✓' : 'Copy'}
+                </button>
+                <button className="btn-ghost" style={{ fontSize: 9, padding: '2px 6px', color: '#475569', flexShrink: 0 }}
+                  onClick={refreshRandomPreview}>↻</button>
+              </>
+            ) : (
+              <span style={{ fontSize: 10, color: '#475569' }}>Generating preview...</span>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="grid-form">
         {/* ── Left column: Form ── */}
         <div className="space-y">
           {/* Token Details — compact: image top, links under description */}
           <div className="card">
-            <h3 className="section-title">Token Details</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h3 className="section-title" style={{ margin: 0 }}>Token Details</h3>
+              {/* AI Generate — inline toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input
+                  ref={aiRefInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={e => setAiRef(e.target.files?.[0] ?? null)}
+                />
+                {aiRefPreview ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <img src={aiRefPreview} alt="Ref" style={{ width: 20, height: 20, borderRadius: 4, objectFit: 'cover', border: '1px solid #253346' }} />
+                    <button type="button" className="btn-ghost" style={{ padding: 1, fontSize: 9, color: '#94a3b8' }} onClick={() => setAiRef(null)}>×</button>
+                  </div>
+                ) : (
+                  <button type="button" className="btn-ghost" style={{ padding: '2px 6px', fontSize: 9, color: '#475569' }} onClick={() => aiRefInputRef.current?.click()}>ref</button>
+                )}
+                <input
+                  className="input"
+                  style={{ width: 150, padding: '3px 6px', fontSize: 10 }}
+                  placeholder="AI prompt..."
+                  value={aiPrompt}
+                  onChange={e => setAiPrompt(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && generateWithAi()}
+                  disabled={aiGenerating}
+                />
+                <button
+                  className="btn-ghost"
+                  style={{ padding: '3px 6px', fontSize: 10, color: aiGenerating ? '#a78bfa' : '#64748b', display: 'flex', alignItems: 'center', gap: 3 }}
+                  onClick={generateWithAi}
+                  disabled={!aiPrompt.trim() || aiGenerating}
+                >
+                  <SparklesIcon style={{ width: 11, height: 11 }} />
+                  {aiGenerating ? '...' : 'AI'}
+                </button>
+              </div>
+            </div>
             {/* Image at top */}
             <div style={{ marginBottom: 14 }}>
               {imagePreview || form.imageUrl ? (
@@ -321,7 +568,10 @@ export default function Launch() {
 
             {/* Dev Buy — compact */}
             <div style={{ marginBottom: 14 }}>
-              <label className="label">Dev Buy</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label className="label" style={{ display: 'flex', alignItems: 'center', margin: 0 }}>Dev Buy<Tip text="The SOL amount the dev wallet will use to buy tokens. The full amount goes to buying — overhead (gas, rent) is added automatically on top." /></label>
+                <WalletSelect value={form.devWalletId || null} onChange={id => updateForm({ devWalletId: id || '' })} slot="Dev" />
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="number" className="input font-mono" style={{ width: 80, padding: '6px 10px', fontSize: 12 }}
                   value={form.devBuyAmount} step={0.01} min={0}
@@ -344,9 +594,9 @@ export default function Launch() {
                 border: '1px solid rgba(37,51,70,0.6)',
                 background: 'rgba(15,23,42,0.3)',
               }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Bundle</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, display: 'flex', alignItems: 'center' }}>Bundle<Tip text="Wallets that buy atomically in the same Jito bundle as the dev buy. They appear as separate buyers on-chain but execute in one block. MEV-protected." /></div>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-                  {[0, 1, 2, 3, 4, 5, 6].map(n => (
+                  {[0, 1, 2, 3, 4, 5].map(n => (
                     <button key={n} className={`chip${form.bundleWalletCount === n ? ' active' : ''}`}
                       style={{ width: 28, padding: '4px 0', fontSize: 10 }} onClick={() => setBundleCount(n)}>{n}</button>
                   ))}
@@ -363,10 +613,11 @@ export default function Launch() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {form.bundleSwapAmounts.map((amt, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 10, color: '#64748b', width: 48 }}>B{i + 1}</span>
+                          <span style={{ fontSize: 10, color: '#64748b', width: 24 }}>B{i + 1}</span>
                           <input type="number" className="input font-mono" style={{ flex: 1, padding: '4px 8px', fontSize: 11 }}
                             value={amt} step={0.01} min={0} onChange={e => setBundleAmount(i, Number(e.target.value))} />
                           <span style={{ fontSize: 10, color: '#64748b' }}>SOL</span>
+                          <WalletSelect value={form.bundleWalletIds[i] ?? null} onChange={id => setBundleWalletId(i, id)} slot={`B${i + 1}`} />
                         </div>
                       ))}
                     </div>
@@ -381,7 +632,7 @@ export default function Launch() {
                 border: '1px solid rgba(37,51,70,0.6)',
                 background: 'rgba(15,23,42,0.3)',
               }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Holder</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#fbbf24', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, display: 'flex', alignItems: 'center' }}>Holder<Tip text="Wallets funded at launch but buy AFTER the bundle lands. Useful for manual market-making. Can auto-buy with a configurable delay." /></div>
                 <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
                   {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
                     <button key={n} className={`chip${form.holderWalletCount === n ? ' active' : ''}`}
@@ -400,10 +651,11 @@ export default function Launch() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
                       {form.holderSwapAmounts.map((amt, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 10, color: '#64748b', width: 48 }}>H{i + 1}</span>
+                          <span style={{ fontSize: 10, color: '#64748b', width: 24 }}>H{i + 1}</span>
                           <input type="number" className="input font-mono" style={{ flex: 1, padding: '4px 8px', fontSize: 11 }}
                             value={amt} step={0.01} min={0} onChange={e => setHolderAmount(i, Number(e.target.value))} />
                           <span style={{ fontSize: 10, color: '#64748b' }}>SOL</span>
+                          <WalletSelect value={form.holderWalletIds[i] ?? null} onChange={id => setHolderWalletId(i, id)} slot={`H${i + 1}`} />
                         </div>
                       ))}
                     </div>
@@ -436,7 +688,7 @@ export default function Launch() {
                 <div className="toggle-knob" />
               </div>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: '#fff' }}>Jito Bundle</div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: '#fff', display: 'flex', alignItems: 'center' }}>Jito Bundle<Tip text="Submits the token creation and all initial buys as a single atomic Jito bundle. All transactions land in the same block — MEV protected, can't be front-run." /></div>
                 <div style={{ fontSize: 12, color: '#64748b' }}>
                   Submit create + buys as atomic Jito bundle
                 </div>
@@ -450,10 +702,10 @@ export default function Launch() {
                   <div className="toggle-knob" />
                 </div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: '#fff' }}>Address Lookup Table</div>
-                  <div style={{ fontSize: 12, color: '#64748b' }}>
-                    Compress transactions via LUT (~55s setup on first launch, reused after)
-                  </div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: '#fff', display: 'flex', alignItems: 'center' }}>Address Lookup Table<Tip text="Creates an on-chain lookup table to compress transaction size. Required for 3+ bundle wallets. Takes ~55s on first launch, then reuses the existing one." /></div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  Compress transactions via LUT (~55s setup on first launch, reused after)
+                </div>
                 </div>
               </div>
             )}
@@ -465,87 +717,11 @@ export default function Launch() {
                   <div className="toggle-knob" />
                 </div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: '#fff' }}>Strict Bundle Only</div>
-                  <div style={{ fontSize: 12, color: '#64748b' }}>
-                    Never fall back to RPC buys if Jito bundle does not fully confirm
-                  </div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: '#fff', display: 'flex', alignItems: 'center' }}>Strict Bundle Only<Tip text="If ON, the launch will only succeed if the Jito bundle lands. If OFF, falls back to regular RPC transactions (faster but not MEV-protected)." /></div>
+                <div style={{ fontSize: 12, color: '#64748b' }}>
+                  Never fall back to RPC buys if Jito bundle does not fully confirm
                 </div>
-              </div>
-            )}
-          </div>
-
-          {/* Mint Address */}
-          <div className="card">
-            <h3 className="section-title">Mint Address</h3>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-              <button className={`chip${form.mintAddressMode === 'random' ? ' active' : ''}`}
-                style={{ padding: '5px 12px', fontSize: 11 }} onClick={() => setMintMode('random')}>
-                Random
-              </button>
-              <button className={`chip${form.mintAddressMode === 'vanity' ? ' active' : ''}`}
-                style={{ padding: '5px 12px', fontSize: 11 }} onClick={() => setMintMode('vanity')}>
-                Vanity Pool
-              </button>
-            </div>
-
-            {form.mintAddressMode === 'vanity' && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, color: '#64748b' }}>
-                    Pool: <span style={{ color: vanityPool.available > 0 ? '#34d399' : '#fb7185', fontWeight: 600 }}>{vanityPool.available}</span>
-                    <span style={{ color: '#475569' }}> / {vanityPool.total}</span>
-                  </div>
-                  {vanityPool.generating ? (
-                    <button className="btn-ghost" style={{ fontSize: 10, color: '#fb7185', padding: '2px 8px' }} onClick={stopVanity}>
-                      Stop
-                    </button>
-                  ) : (
-                    <button className="btn-ghost" style={{ fontSize: 10, color: '#14b8a6', padding: '2px 8px' }} onClick={startVanity}>
-                      Generate More
-                    </button>
-                  )}
-                  {vanityPool.generating && (
-                    <span style={{ fontSize: 10, color: '#fbbf24' }}>Generating...</span>
-                  )}
                 </div>
-
-                {vanityAddresses.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {vanityAddresses.slice(0, 8).map(addr => (
-                      <div key={addr.publicKey} onClick={() => updateForm({ vanityMintPublicKey: addr.publicKey })}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 8,
-                          padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
-                          border: form.vanityMintPublicKey === addr.publicKey ? '1px solid #14b8a6' : '1px solid #1e293b',
-                          background: form.vanityMintPublicKey === addr.publicKey ? 'rgba(20,184,166,0.06)' : 'transparent',
-                        }}>
-                        <div style={{
-                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                          background: form.vanityMintPublicKey === addr.publicKey ? '#14b8a6' : '#334155',
-                        }} />
-                        <span className="font-mono" style={{ fontSize: 11, color: '#e2e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {addr.publicKey.slice(0, 6)}...{addr.publicKey.slice(-6)}
-                        </span>
-                        <span style={{
-                          fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-                          background: 'rgba(20,184,166,0.12)', color: '#14b8a6',
-                        }}>
-                          {addr.suffix}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 11, color: '#64748b', padding: 8 }}>
-                    No vanity addresses available. Start the generator to create some.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {form.mintAddressMode === 'random' && (
-              <div style={{ fontSize: 11, color: '#64748b' }}>
-                A random mint keypair will be generated at launch time.
               </div>
             )}
           </div>
@@ -592,15 +768,15 @@ export default function Launch() {
                 </div>
               )}
               <div className="summary-row">
-                <span className="label-side">Fees</span>
+                <span className="label-side" style={{ display: 'flex', alignItems: 'center' }}>Fees<Tip text="On-chain transaction fees and account rent costs. These are small and non-recoverable." width={180} /></span>
                 <span className="value-side" style={{ fontSize: 11 }}>~{((1 + form.bundleWalletCount + form.holderWalletCount) * 0.003).toFixed(4)} SOL</span>
               </div>
               <div className="summary-row">
-                <span className="label-side">Buffer</span>
+                <span className="label-side" style={{ display: 'flex', alignItems: 'center' }}>Buffer<Tip text="Extra SOL for gas and trading overhead per wallet. Most of it is returned when collecting SOL back to funding." width={200} /></span>
                 <span className="value-side" style={{ fontSize: 11 }}>~{(0.1 + form.bundleWalletCount * 0.02 + form.holderWalletCount * 0.01 - (1 + form.bundleWalletCount + form.holderWalletCount) * 0.003).toFixed(3)} SOL</span>
               </div>
               <div style={{ fontSize: 9, color: '#475569', marginTop: -2, marginBottom: 4, paddingLeft: 2, lineHeight: 1.35 }}>
-                <span style={{ fontStyle: 'italic' }}>0.1 (dev) + 0.02×{form.bundleWalletCount} bundle + 0.01×{form.holderWalletCount} holder.</span> Recover when you collect SOL.
+                <span style={{ fontStyle: 'italic' }}>Extra SOL for gas &amp; trading overhead per wallet. Most is returned when collecting SOL back.</span>
               </div>
               <div className="summary-row total">
                 <span className="label-side">Total</span>

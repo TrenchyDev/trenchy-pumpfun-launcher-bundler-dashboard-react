@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import axios from 'axios'
+import Tip from '../components/ui/Tip'
 
 interface Wallet {
   id: string
@@ -23,7 +24,8 @@ interface UnclaimedFee {
   createdAt: string
 }
 
-const TYPES = ['all', 'funding', 'dev', 'bundle', 'holder', 'mint', 'manual'] as const
+const TYPES = ['all', 'funding', 'dev', 'bundle', 'holder', 'mint'] as const
+const TYPE_LABELS: Record<string, string> = {}
 const BADGE_COLORS: Record<string, string> = {
   funding: 'badge-amber',
   dev: 'badge-green',
@@ -36,6 +38,7 @@ const BADGE_COLORS: Record<string, string> = {
 export default function Wallets() {
   const [wallets, setWallets] = useState<Wallet[]>([])
   const [archivedWallets, setArchivedWallets] = useState<Wallet[]>([])
+  const [importedWallets, setImportedWallets] = useState<Wallet[]>([])
   const [showArchived, setShowArchived] = useState(false)
   const [balances, setBalances] = useState<BalanceMap>({})
   const [filter, setFilter] = useState<string>('all')
@@ -70,15 +73,22 @@ export default function Wallets() {
     setArchivedWallets(res.data)
   }, [filter])
 
+  const fetchImported = useCallback(async () => {
+    try {
+      const res = await axios.get('/api/wallets/imported')
+      setImportedWallets(res.data)
+    } catch { setImportedWallets([]) }
+  }, [])
+
   useEffect(() => { fetchWallets() }, [fetchWallets])
+  useEffect(() => { fetchImported() }, [fetchImported])
   useEffect(() => { if (showArchived) fetchArchivedWallets() }, [showArchived, fetchArchivedWallets])
 
   const refreshBalances = async () => {
     setLoading(true)
     try {
-      const res = await axios.post('/api/wallets/refresh-balances', {
-        ids: wallets.map(w => w.id),
-      })
+      const allIds = [...wallets.map(w => w.id), ...importedWallets.map(w => w.id)]
+      const res = await axios.post('/api/wallets/refresh-balances', { ids: allIds })
       const map: BalanceMap = {}
       for (const b of res.data) map[b.id] = b.balance
       setBalances(map)
@@ -103,7 +113,13 @@ export default function Wallets() {
     })
     setImportKey('')
     setImportLabel('')
-    fetchWallets()
+    fetchImported()
+  }
+
+  const handleDeleteImported = async (id: string) => {
+    if (!confirm('Permanently delete this imported wallet?')) return
+    await axios.delete(`/api/wallets/imported/${id}`)
+    fetchImported()
   }
 
   const handleArchive = async (id: string) => {
@@ -148,7 +164,8 @@ export default function Wallets() {
   }
 
   const handleArchiveAll = async () => {
-    const label = filter === 'all' ? 'all non-funding' : filter
+    const displayLabel = TYPE_LABELS[filter] || filter
+    const label = filter === 'all' ? 'all non-funding launch wallets (imported wallets are kept)' : displayLabel
     if (!confirm(`Archive ${label} wallets? (Funding wallet is never archived)`)) return
     setArchiving(true)
     try {
@@ -183,7 +200,7 @@ export default function Wallets() {
     setCollectFeesResult(null)
     try {
       const res = await axios.get('/api/trading/all-unclaimed-fees')
-      setUnclaimedFees((res.data as UnclaimedFee[]).filter(f => f.availableSol >= 0.005))
+      setUnclaimedFees((res.data as UnclaimedFee[]).filter(f => f.availableSol >= 0.0001))
     } catch (err: unknown) {
       console.error(err)
     } finally {
@@ -301,6 +318,8 @@ export default function Wallets() {
                   <option value="manual">Manual</option>
                   <option value="funding">Funding</option>
                   <option value="dev">Dev</option>
+                  <option value="bundle">Bundle</option>
+                  <option value="holder">Holder</option>
                 </select>
               </div>
               <button className="btn-primary" onClick={handleImport}>Import</button>
@@ -313,7 +332,7 @@ export default function Wallets() {
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: unclaimedFees.length > 0 ? 12 : 0 }}>
           <div>
-            <h3 className="section-title" style={{ marginBottom: 2 }}>Creator Fees</h3>
+            <h3 className="section-title" style={{ marginBottom: 2, display: 'flex', alignItems: 'center' }}>Creator Fees<Tip text="Pump.fun pays creator fees on every trade of your token. Scan to find unclaimed fees across all your launches, then collect them in bulk." /></h3>
             <p style={{ fontSize: 11, color: '#64748b', margin: 0 }}>
               Scan all launches for unclaimed fees, collect and sweep to funding wallet
             </p>
@@ -418,7 +437,7 @@ export default function Wallets() {
             <button key={t}
               className={`chip${filter === t ? ' active' : ''}`}
               onClick={() => setFilter(t)}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {TYPE_LABELS[t] || t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
         </div>
@@ -431,17 +450,23 @@ export default function Wallets() {
             onClick={refreshBalances} disabled={loading}>
             {loading ? 'Refreshing...' : 'Refresh Balances'}
           </button>
-          <button className="btn-danger" style={{ fontSize: 12, padding: '8px 16px' }}
-            onClick={handleGather} disabled={gathering}>
-            {gathering ? 'Recovering...' : 'Recover All SOL'}
-          </button>
-          <button style={{
-            fontSize: 12, padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.3)',
-            background: 'rgba(251,191,36,0.08)', color: '#fbbf24', fontWeight: 600, cursor: 'pointer',
-          }}
-            onClick={handleArchiveAll} disabled={archiving || wallets.filter(w => w.type !== 'funding').length === 0}>
-            {archiving ? 'Archiving...' : `Archive All${filter !== 'all' ? ` ${filter.charAt(0).toUpperCase() + filter.slice(1)}` : ''}`}
-          </button>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <button className="btn-danger" style={{ fontSize: 12, padding: '8px 16px' }}
+              onClick={handleGather} disabled={gathering}>
+              {gathering ? 'Recovering...' : 'Recover All SOL'}
+            </button>
+            <Tip text="Sends all SOL from every active wallet (dev, bundle, holder, mint) back to the funding wallet. Does NOT sell tokens — just sweeps SOL." />
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <button style={{
+              fontSize: 12, padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(251,191,36,0.3)',
+              background: 'rgba(251,191,36,0.08)', color: '#fbbf24', fontWeight: 600, cursor: 'pointer',
+            }}
+              onClick={handleArchiveAll} disabled={archiving || wallets.filter(w => w.type !== 'funding').length === 0}>
+              {archiving ? 'Archiving...' : `Archive All${filter !== 'all' ? ` ${TYPE_LABELS[filter] || filter.charAt(0).toUpperCase() + filter.slice(1)}` : ''}`}
+            </button>
+            <Tip text="Moves wallets to the archived list. Archived wallets are hidden from launches but their keys are kept. You can restore them later." />
+          </span>
         </div>
       </div>
 
@@ -481,6 +506,57 @@ export default function Wallets() {
         ) : wallets.map(w => renderWalletRow(w, false))}
       </div>
 
+      {/* Imported Wallets */}
+      {importedWallets.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700, color: '#14b8a6', margin: 0 }}>
+              Imported Wallets
+              <span style={{ fontSize: 12, color: '#475569', fontWeight: 400, marginLeft: 8 }}>
+                ({importedWallets.length})
+              </span>
+            </h3>
+          </div>
+          <div className="card-flat">
+            <div className="table-header">
+              <div style={{ width: 80 }}>Type</div>
+              <div style={{ flex: 1 }}>Public Key</div>
+              <div style={{ width: 110, textAlign: 'right' }}>Balance</div>
+              <div style={{ width: 100, textAlign: 'right' }}>Label</div>
+              <div style={{ width: 180, textAlign: 'right' }}>Actions</div>
+            </div>
+            {importedWallets.map(w => (
+              <div key={w.id} className="table-row">
+                <div style={{ width: 80 }}>
+                  <span className={`badge ${BADGE_COLORS[w.type] || 'badge-gray'}`}>{w.type}</span>
+                </div>
+                <div className="font-mono" style={{ flex: 1, fontSize: 12, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {w.publicKey}
+                </div>
+                <div className="font-mono" style={{ width: 110, textAlign: 'right', fontSize: 12 }}>
+                  {balances[w.id] !== undefined ? `${balances[w.id].toFixed(4)} SOL` : '---'}
+                </div>
+                <div style={{ width: 100, textAlign: 'right', fontSize: 11, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {w.label}
+                </div>
+                <div style={{ width: 180, display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
+                  <button className="btn-ghost" onClick={() => copyToClipboard(w.publicKey, w.id)}>
+                    {copied === w.id ? 'Copied!' : 'Copy'}
+                  </button>
+                  <button className="btn-ghost" onClick={() => revealKey(w.id)}>
+                    {copied === `pk-${w.id}` ? 'Copied!' : 'Key'}
+                  </button>
+                  <button className="btn-ghost" style={{ color: '#fb7185' }}
+                    onClick={() => handleDeleteImported(w.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Archived Wallets */}
       {showArchived && (
         <div style={{ marginTop: 24 }}>
@@ -492,14 +568,17 @@ export default function Wallets() {
               </span>
             </h3>
             {archivedWallets.length > 0 && (
-              <button style={{
-                fontSize: 11, padding: '6px 14px', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
-                border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.08)', color: '#c084fc',
-              }}
-                disabled={closingATAs}
-                onClick={handleCloseTokenAccounts}>
-                {closingATAs ? 'Closing ATAs...' : 'Close All Token Accounts → Funding'}
-              </button>
+              <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <button style={{
+                  fontSize: 11, padding: '6px 14px', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
+                  border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.08)', color: '#c084fc',
+                }}
+                  disabled={closingATAs}
+                  onClick={handleCloseTokenAccounts}>
+                  {closingATAs ? 'Closing ATAs...' : 'Close All Token Accounts → Funding'}
+                </button>
+                <Tip text="Closes leftover token accounts in archived wallets and recovers the ~0.002 SOL rent per account back to the funding wallet." />
+              </span>
             )}
           </div>
 

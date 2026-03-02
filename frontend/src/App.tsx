@@ -3,6 +3,7 @@ import Layout from './components/layout/Layout'
 import Launch from './pages/Launch'
 import Wallets from './pages/Wallets'
 import Trading from './pages/Trading'
+import Settings from './pages/Settings'
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
         <Route path="/launch" element={<Launch />} />
         <Route path="/wallets" element={<Wallets />} />
         <Route path="/trading" element={<Trading />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
   )

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import type { LiveTrade } from '../../types'
 import { fmtSol, fmtTokens } from '../../types'
 
@@ -12,9 +13,37 @@ interface Props {
   emptyMessage: string
 }
 
-const fmtMcap = (n: number | null) => {
-  if (!n) return '-'
-  const usd = n * 170
+let _cachedSolPrice = 0
+let _cachedAt = 0
+
+function useSolPrice() {
+  const [price, setPrice] = useState(_cachedSolPrice)
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    const fetch_ = async () => {
+      if (Date.now() - _cachedAt < 30_000 && _cachedSolPrice > 0) {
+        setPrice(_cachedSolPrice)
+        return
+      }
+      try {
+        const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd')
+        const d = await res.json()
+        const p = d?.solana?.usd || 0
+        if (p > 0) { _cachedSolPrice = p; _cachedAt = Date.now(); setPrice(p) }
+      } catch {}
+    }
+    fetch_()
+    timer.current = setInterval(fetch_, 60_000)
+    return () => { if (timer.current) clearInterval(timer.current) }
+  }, [])
+
+  return price
+}
+
+const fmtMcap = (n: number | null, solPrice: number) => {
+  if (!n || !solPrice) return '-'
+  const usd = n * solPrice
   return usd >= 1_000_000 ? `$${(usd / 1_000_000).toFixed(1)}M` : usd >= 1000 ? `$${(usd / 1000).toFixed(1)}K` : `$${usd.toFixed(0)}`
 }
 
@@ -29,6 +58,7 @@ export default function LiveTradesPanel({
   trades, totalCount, hideOurs, onToggleHideOurs,
   liveError, externalVolume, ourPnl, emptyMessage,
 }: Props) {
+  const solPrice = useSolPrice()
   return (
     <div className="card-flat" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: '8px 10px', borderBottom: '1px solid rgba(37,51,70,0.5)', background: 'rgba(11,17,24,0.6)' }}>
@@ -96,7 +126,7 @@ export default function LiveTradesPanel({
             <span className="font-mono" style={{ fontWeight: 600, color: '#e2e8f0', minWidth: 48, textAlign: 'right' }}>{fmtSol(t.solAmount)}</span>
             <span style={{ color: '#475569', fontSize: 9 }}>SOL</span>
             <span className="font-mono" style={{ color: '#64748b', flex: 1, textAlign: 'right', fontSize: 10 }}>{fmtTokens(t.tokenAmount)}</span>
-            <span style={{ color: '#475569', fontSize: 9, minWidth: 40, textAlign: 'right' }}>{fmtMcap(t.marketCapSol)}</span>
+            <span style={{ color: '#475569', fontSize: 9, minWidth: 40, textAlign: 'right' }}>{fmtMcap(t.marketCapSol, solPrice)}</span>
             <span className="font-mono" style={{ color: '#475569', fontSize: 9 }}>{t.traderShort}</span>
             <span style={{ color: '#334155', fontSize: 9, minWidth: 18, textAlign: 'right' }}>{timeAgo(t.timestamp)}</span>
           </div>

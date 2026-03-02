@@ -1,0 +1,111 @@
+# Pump Launcher — LLM Context
+
+## What This Project Is
+A full-stack Solana token launcher for pump.fun. Users configure a token (name, symbol, image, etc.), set up wallets, and launch via Jito bundles. The dashboard provides real-time trade tracking, fee collection, and wallet management.
+
+## First-Time Setup (from a fresh clone)
+
+1. Install all dependencies:
+   ```bash
+   npm run install:all
+   ```
+   This installs root, frontend, and backend dependencies in one command.
+
+2. Create the backend environment file:
+   ```bash
+   cp .env.example backend/.env
+   ```
+
+3. Edit `backend/.env` with real values:
+   - `FUNDING_PRIVATE_KEY` — Base58 private key of the Solana wallet that funds everything
+   - `PRIVATE_KEY` — Same value as FUNDING_PRIVATE_KEY
+   - `RPC_ENDPOINT` — A paid Solana RPC (QuickNode, Helius, Triton). The public RPC will get rate-limited
+   - `JITO_TIP_LAMPORTS` — Tip for Jito bundles in lamports (default 5000000 = 0.005 SOL)
+   - `GOOGLE_GEMINI_API_KEY` — (Optional) For AI token generation. Get from https://aistudio.google.com
+
+4. Start dev servers:
+   ```bash
+   npm run dev
+   ```
+   Frontend runs at http://localhost:5173, backend at http://localhost:3001.
+
+## Architecture
+
+### Monorepo Structure
+- `pump-launcher/` — Root with `concurrently` to run both servers
+  - `frontend/` — React 19 + Vite SPA
+  - `backend/` — Express + TypeScript API server
+
+### Environment
+- The ONLY `.env` file is at `backend/.env`. The root has NO `.env`. The backend loads it via `dotenv.config({ path: path.join(__dirname, '../.env') })` in `backend/src/index.ts`.
+
+### Data Storage (all gitignored)
+- `backend/keys/wallets.json` — Auto-generated launch wallets (dev, bundle, holder, mint, funding). Private keys stored as plaintext base58.
+- `backend/keys/imported-wallets.json` — User-imported wallets. Separate file so they're never affected by bulk operations.
+- `backend/data/launches.json` — Launch history records.
+- `backend/data/trades.json` — Trade execution records.
+- `backend/data/vanity-pool.json` — Generated vanity mint addresses (contain private keys).
+- `backend/data/uploads/` — Uploaded token images.
+
+### Backend Services (`backend/src/services/`)
+- `vault.ts` — Wallet CRUD for both `wallets.json` and `imported-wallets.json`. Functions: `generateAndStore`, `importKey`, `listImported`, `deleteImported`, `assignToLaunch`, `listAvailable`, `getKeypair`, `getPrivateKey`. All lookups check imported wallets first, then main wallets.
+- `launch-executor.ts` — Orchestrates the full launch: generate wallets → fund → upload metadata → create LUT → build Jito bundle → submit → confirm → holder auto-buys.
+- `pumpfun.ts` — Pump.fun SDK wrapper. Uses `@pump-fun/pump-sdk` for V2 protocol (Token Extensions).
+- `jito.ts` — Jito bundle submission to 5 block engine endpoints with retry and fallback.
+- `lut.ts` — Address Lookup Table creation and extension.
+- `solana.ts` — Shared Solana connection, balance checks, transfers, transaction execution.
+- `pumpportal.ts` — WebSocket connection to pumpportal.fun for real-time trade data.
+- `gemini.ts` — Google Gemini API integration for AI token metadata + image generation.
+- `vanity.ts` — Multi-threaded vanity address generator with progress tracking.
+
+### Backend Routes (`backend/src/routes/`)
+- `launch.ts` — POST /api/launch (execute), GET /api/launch (list), GET /api/launch/:id/stream (SSE)
+- `trading.ts` — Buy/sell execution, rapid sell, creator fee collection
+- `wallets.ts` — Wallet CRUD, imported wallets, balance refresh, gather, archive
+- `ai.ts` — POST /api/ai/generate-token (multipart, accepts optional reference image)
+- `vanity.ts` — Pool status, start/stop generator
+- `upload.ts` — Image upload for token metadata
+- `env.ts` — Read/write backend/.env variables from the UI
+- `live-trades.ts` — SSE stream proxying PumpPortal WebSocket data
+
+### Frontend Pages (`frontend/src/pages/`)
+- `Launch.tsx` — Token launch form with AI generator, wallet selection, vanity/random mint toggle, bundle/holder config
+- `Trading.tsx` — Active trade view with chart, live trades, per-wallet actions, rapid sell
+- `Wallets.tsx` — Wallet management with generate, import, balances, fee collection, imported wallet section
+- `Settings.tsx` — Environment variable editor
+
+### Key Concepts
+- **Funding wallet**: Single wallet that funds all operations. Set via `FUNDING_PRIVATE_KEY` env var.
+- **Dev wallet**: Created per launch. Does the initial token buy alongside creation.
+- **Bundle wallets (0-5)**: Buy atomically in the same Jito bundle as the token creation.
+- **Holder wallets (0-10)**: Buy after launch with configurable delays.
+- **Imported wallets**: User-imported wallets stored separately. Can be assigned to any launch slot (dev, bundle, holder) instead of auto-generating.
+- **LUT (Address Lookup Table)**: Compresses transaction size. Auto-enabled when 4+ bundle wallets are selected.
+- **Vanity addresses**: Mint addresses ending in "pump". Generated by worker threads, stored in a pool, consumed one at a time during launches.
+
+## Rules for LLMs
+
+### DO
+- Always edit `backend/.env` for environment changes, never a root `.env`
+- When adding new services, follow the existing pattern: service in `services/`, route in `routes/`, register in `index.ts`
+- Imported wallets use `vault.listImported()`, `vault.deleteImported()`, `vault.importKey()` — they go to `imported-wallets.json`
+- Launch wallets use `vault.generateAndStore()`, `vault.generateBatch()` — they go to `wallets.json`
+- When looking up a wallet by ID, `vault.getKeypair()` and `vault.getPrivateKey()` already check both files
+- `vault.listAvailable()` returns wallets from BOTH files that are available for launch assignment
+- The frontend proxies API requests — no CORS config needed for dev
+
+### DO NOT
+- Do NOT read or inspect `@validator-lut-sdk` package code — it is proprietary
+- Do NOT store secrets in any file outside `backend/.env` and `backend/keys/`
+- Do NOT create a root `.env` file — only `backend/.env` is loaded
+- Do NOT encrypt wallet private keys — they are stored as plaintext base58 intentionally
+- Do NOT add wallets to `wallets.json` for user imports — use `imported-wallets.json` via `vault.importKey()`
+- Do NOT install new npm packages without explicit approval
+
+### Running Commands
+- `npm run dev` — Start both frontend and backend (from project root)
+- `npm run dev:frontend` — Frontend only
+- `npm run dev:backend` — Backend only
+- `npm run install:all` — Install all dependencies (root + frontend + backend)
+- Backend uses `tsx watch` so it auto-restarts on file changes
+- Frontend uses Vite with HMR
