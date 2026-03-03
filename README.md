@@ -1,15 +1,12 @@
 # Trencher Bundler V2
 
-The next-generation Solana token launcher for [pump.fun](https://pump.fun). Built from the ground up on the official `@pump-fun/pump-sdk` with Jito bundle support, real-time trade tracking, AI token generation, and a wallet vault.
+The next-generation Solana token launcher for pump.fun. Built from the ground up on the official `@pump-fun/pump-sdk` with Jito bundle support, real-time trade tracking, AI token generation, and a wallet vault.
 
 Launch tokens, manage wallets, execute trades, and collect creator fees — all from a single dashboard.
 
 > **V2 Protocol Native** — Built directly on pump.fun's V2 SDK (`@pump-fun/pump-sdk`) using Token Extensions (`TOKEN_2022_PROGRAM_ID`) and V2 program instructions. Not a patch on top of the old protocol — this is a full rewrite.
 
-**Connect with us:**
-- Website: [trencherbundler.fun](https://trencherbundler.fun)
-- Twitter: [@trencherbundler_x](https://x.com/trencherbundler_x)
-- Telegram: [@dogtoshi_x](https://t.me/dogtoshi_x)
+**Website:** [trenchytools.lol](https://trenchytools.lol)
 
 ---
 
@@ -95,7 +92,7 @@ JITO_TIP_LAMPORTS=5000000
 |----------|----------|---------|-------------|
 | `ENCRYPTION_KEY` | No | auto-generated | Custom key for legacy wallet migration. |
 | `BIRDEYE_API_KEY` | No | — | Reserved for future features. |
-| `GOOGLE_GEMINI_API_KEY` | No | — | Required for AI token generation (name, description, image). Get one at https://aistudio.google.com |
+| `GOOGLE_GEMINI_API_KEY` | No | — | Required for AI token generation (name, description, image). |
 
 > **Note:** There is NO `.env` file in the project root. Only `backend/.env` is loaded by the server.
 
@@ -338,7 +335,7 @@ pump-launcher/
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License.
 
 ---
 

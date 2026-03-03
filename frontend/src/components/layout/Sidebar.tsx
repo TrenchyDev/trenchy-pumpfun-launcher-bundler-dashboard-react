@@ -16,9 +16,9 @@ interface SidebarProps {
 export default function Sidebar({ envWarning = false, onClearSession }: SidebarProps) {
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo">
+      <a href="https://trenchytools.lol" target="_blank" rel="noopener noreferrer" className="sidebar-logo" style={{ display: 'block' }}>
         <img src="/image/trencherlogo.png" alt="Trencher" style={{ height: 36, width: 'auto', objectFit: 'contain' }} />
-      </div>
+      </a>
 
       <nav style={{ flex: 1, padding: '12px 0' }}>
         {links.map(link => (
