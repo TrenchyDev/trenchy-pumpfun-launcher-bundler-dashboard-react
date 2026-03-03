@@ -122,10 +122,10 @@ export default function Trading() {
   const [rapidSelling, setRapidSelling] = useState(false)
   const [rapidSellSummary, setRapidSellSummary] = useState<RapidSellSummary | null>(null)
   const [rapidSellErrors, setRapidSellErrors] = useState<string[]>([])
-  const [collectingFees, setCollectingFees] = useState(false)
+  const [, setCollectingFees] = useState(false)
   const [collectFeesMsg, setCollectFeesMsg] = useState('')
   const [creatorFeesAvailable, setCreatorFeesAvailable] = useState<number | null>(null)
-  const [devSolForFees, setDevSolForFees] = useState<number | null>(null)
+  const [, setDevSolForFees] = useState<number | null>(null)
   const [closingOut, setClosingOut] = useState(false)
   const [closeoutResult, setCloseoutResult] = useState<CloseoutResult | null>(null)
   const [liveTrades, setLiveTrades] = useState<LiveTrade[]>([])
@@ -405,7 +405,6 @@ export default function Trading() {
     return () => clearInterval(t)
   }, [fetchCreatorFeesAvailable, selectedLaunch?.id])
 
-  const needsFunding = devSolForFees !== null && devSolForFees < 0.000008
   const handleCollectCreatorFees = async () => {
     if (!selectedLaunch?.id) return
     setCollectingFees(true); setCollectFeesMsg('')

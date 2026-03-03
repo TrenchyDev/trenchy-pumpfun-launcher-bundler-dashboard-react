@@ -29,8 +29,9 @@ export default function Header() {
   const balanceTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const priceTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const fetchBalance = useCallback(() => {
-    axios.get('/api/wallets/funding').then(res => {
+  const fetchBalance = useCallback((forceRefresh = false) => {
+    const url = forceRefresh ? '/api/wallets/funding?refresh=1' : '/api/wallets/funding'
+    axios.get(url).then(res => {
       setFundingBalance(res.data.balance)
       setFundingAddress(res.data.publicKey || '')
     }).catch(() => {})
@@ -141,13 +142,13 @@ export default function Header() {
           fontSize: 12, fontWeight: 700,
           color: '#14b8a6', cursor: 'pointer',
           display: 'flex', alignItems: 'center', gap: 4,
-        }} onClick={fetchBalance} title="Click to refresh">
+        }} onClick={() => fetchBalance(true)} title="Click to refresh (forces new RPC connection)">
           <img src="/image/icons/sol_logo.svg" alt="SOL" style={{ width: 14, height: 14 }} />
           {fundingBalance !== null ? `${fundingBalance.toFixed(4)} SOL` : '---'}
         </span>
         <ArrowPathIcon
           style={{ width: 13, height: 13, color: '#475569', cursor: 'pointer' }}
-          onClick={fetchBalance}
+          onClick={() => fetchBalance(true)}
           title="Refresh balance"
         />
       </div>

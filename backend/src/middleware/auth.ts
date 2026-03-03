@@ -28,3 +28,16 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
 export function signToken(userId: number, username: string): string {
   return jwt.sign({ userId, username }, JWT_SECRET, { expiresIn: '7d' });
 }
+
+/** Optional auth: sets userId/username if token valid, does not fail if missing */
+export function optionalAuthMiddleware(req: AuthRequest, _res: Response, next: NextFunction) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return next();
+  const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: number; username: string };
+    req.userId = payload.userId;
+    req.username = payload.username;
+  } catch {}
+  next();
+}

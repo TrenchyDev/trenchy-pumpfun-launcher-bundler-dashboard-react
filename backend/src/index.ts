@@ -1,6 +1,23 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { execSync } from 'child_process';
+
 dotenv.config({ path: path.join(__dirname, '../.env') });
+
+function killPort(port: number): void {
+  if (process.platform !== 'win32') return; // Only on Windows
+  try {
+    const out = execSync(
+      `(Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -ne 0 } | Select-Object -ExpandProperty OwningProcess -Unique)`,
+      { shell: 'powershell.exe', encoding: 'utf8' }
+    ).trim();
+    if (out) {
+      for (const pid of out.split(/\r?\n/).map(s => s.trim()).filter(Boolean)) {
+        try { execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' }); } catch {}
+      }
+    }
+  } catch {}
+}
 
 import express from 'express';
 import cors from 'cors';
@@ -11,6 +28,7 @@ import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 import './db';
 import { initFundingStore } from './services/funding-store';
+import authRoutes from './routes/auth';
 import fundingRoutes from './routes/funding';
 import walletRoutes from './routes/wallets';
 import launchRoutes from './routes/launch';
@@ -33,6 +51,7 @@ const uploadsDir = fspath.join(__dirname, '../data/uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/api/uploads', express.static(uploadsDir));
 
+app.use('/api/auth', authRoutes);
 app.use('/api/funding', fundingRoutes);
 app.use('/api/wallets', walletRoutes);
 app.use('/api/launch', launchRoutes);
@@ -46,6 +65,16 @@ app.use('/api/ai', aiRoutes);
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Serve frontend static files (production)
+const publicDir = fspath.join(__dirname, '../public');
+if (fs.existsSync(publicDir)) {
+  app.use(express.static(publicDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(fspath.join(publicDir, 'index.html'));
+  });
+}
 
 let activeServer: Server | null = null;
 
@@ -74,14 +103,16 @@ function tryListen(attempt: number): void {
     if (err?.code !== 'EADDRINUSE') throw err;
 
     if (attempt >= MAX_PORT_RETRIES) {
-      console.error(`[Backend] Port ${PORT} still busy after ${MAX_PORT_RETRIES} retries. Exiting.`);
+      console.error(`[Backend] Port ${PORT} still busy after ${MAX_PORT_RETRIES} retries. Run start.bat or: node kill-ports.js`);
       process.exit(1);
     }
 
-    console.warn(`[Backend] Port ${PORT} busy, retrying in ${PORT_RETRY_DELAY_MS}ms... (${attempt + 1}/${MAX_PORT_RETRIES})`);
-    setTimeout(() => tryListen(attempt + 1), PORT_RETRY_DELAY_MS);
+    console.warn(`[Backend] Port ${PORT} busy, killing and retrying... (${attempt + 1}/${MAX_PORT_RETRIES})`);
+    killPort(PORT);
+    setTimeout(() => tryListen(attempt + 1), 1500);
   });
 
+  killPort(PORT);
   server.listen({ port: PORT, exclusive: false });
 }
 

@@ -21,7 +21,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [fundingStatus, setFundingStatus] = useState<{ publicKey: string; balance?: number } | null>(null)
+  const [fundingStatus, setFundingStatus] = useState<{ publicKey: string; balance?: number; error?: string } | null>(null)
   const [switchWalletMode, setSwitchWalletMode] = useState(false)
   const [newPrivateKey, setNewPrivateKey] = useState('')
   const [switchError, setSwitchError] = useState<string | null>(null)
@@ -38,8 +38,8 @@ export default function Settings() {
 
   useEffect(() => {
     axios.get('/api/wallets/funding').then(r => {
-      if (r.data.publicKey) setFundingStatus({ publicKey: r.data.publicKey, balance: r.data.balance })
-    }).catch(() => setFundingStatus(null))
+      if (r.data.publicKey) setFundingStatus({ publicKey: r.data.publicKey, balance: r.data.balance, error: r.data.error })
+    }).catch(() => setFundingStatus({ publicKey: '', balance: 0, error: 'Failed to load' }))
   }, [])
 
   const dirty = entries.some(e => draft[e.key] !== e.value)
@@ -83,7 +83,7 @@ export default function Settings() {
       await axios.post('/api/funding/save', { sessionId, privateKey: key })
       localStorage.setItem(FUNDING_KEY, key)
       const r = await axios.get('/api/wallets/funding')
-      setFundingStatus({ publicKey: r.data.publicKey, balance: r.data.balance })
+      setFundingStatus({ publicKey: r.data.publicKey, balance: r.data.balance, error: r.data.error })
       setSwitchWalletMode(false)
       setNewPrivateKey('')
     } catch (err: any) {
@@ -130,17 +130,24 @@ export default function Settings() {
         <div style={{ padding: '16px 20px' }}>
           {!switchWalletMode ? (
             <div>
-              {fundingStatus ? (
+              {fundingStatus?.publicKey ? (
                 <div style={{ fontSize: 13, color: '#94a3b8' }}>
                   <div style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all', marginBottom: 4 }}>
                     {fundingStatus.publicKey}
                   </div>
-                  {fundingStatus.balance != null && (
+                  {fundingStatus.balance != null && !fundingStatus.error && (
                     <div style={{ fontSize: 12, color: '#64748b' }}>
                       Balance: {fundingStatus.balance.toFixed(4)} SOL
                     </div>
                   )}
+                  {fundingStatus.error && (
+                    <div style={{ fontSize: 11, color: '#f59e0b' }}>
+                      Balance unavailable: {fundingStatus.error}
+                    </div>
+                  )}
                 </div>
+              ) : fundingStatus?.error ? (
+                <div style={{ fontSize: 13, color: '#f87171' }}>{fundingStatus.error}</div>
               ) : (
                 <div style={{ fontSize: 13, color: '#64748b' }}>Loading...</div>
               )}
@@ -216,10 +223,7 @@ export default function Settings() {
               Required configuration missing
             </div>
             <div style={{ color: '#fca5a5', fontSize: 12, lineHeight: 1.5 }}>
-              Set the following before launching: {missingRequired.map(e => {
-                const entry = entries.find(x => x.key === e)
-                return entry?.label ?? e
-              }).join(', ')}
+              Set the following before launching: {missingRequired.map(e => e.label ?? e.key).join(', ')}
             </div>
           </div>
         </div>

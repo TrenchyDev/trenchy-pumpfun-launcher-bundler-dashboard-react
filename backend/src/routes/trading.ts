@@ -502,21 +502,15 @@ router.get('/all-unclaimed-fees', async (_req: Request, res: Response) => {
     createdAt: string;
   }[] = [];
 
-  console.log(`[AllFees] Scanning ${launches.length} confirmed launches for fees...`);
   for (const launch of launches) {
     const devWallets = vault.listWallets({ type: 'dev' }).filter(w => w.launchId === launch.id);
-    if (devWallets.length === 0) {
-      console.log(`[AllFees] ${launch.tokenSymbol} (${launch.id.slice(0,8)}): no dev wallet found, skipping`);
-      continue;
-    }
+    if (devWallets.length === 0) continue;
 
     const devWallet = devWallets.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
     try {
       const keypair = vault.getKeypair(devWallet.id);
-      console.log(`[AllFees] ${launch.tokenSymbol}: checking creator vault for ${keypair.publicKey.toBase58().slice(0,8)}...`);
       const balance = await suppressSdkWarns(() => sdk.getCreatorVaultBalanceBothPrograms(keypair.publicKey));
       const availableSol = Number(balance.toString()) / LAMPORTS_PER_SOL;
-      console.log(`[AllFees] ${launch.tokenSymbol}: ${availableSol.toFixed(6)} SOL available`);
       results.push({
         launchId: launch.id,
         tokenName: launch.tokenName,
@@ -526,11 +520,11 @@ router.get('/all-unclaimed-fees', async (_req: Request, res: Response) => {
         availableSol,
         createdAt: launch.createdAt,
       });
-    } catch (err: unknown) {
-      console.error(`[AllFees] ${launch.tokenSymbol} ERROR:`, err instanceof Error ? err.message : err);
+    } catch {
+      // RPC fetch failed / rate limit — skip, don't spam logs
     }
-    // Small delay to avoid RPC rate limits
-    await new Promise(r => setTimeout(r, 200));
+    // Delay to avoid RPC rate limits (500ms between requests)
+    await new Promise(r => setTimeout(r, 500));
   }
 
   res.json(results);

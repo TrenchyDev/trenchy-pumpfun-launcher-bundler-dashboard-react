@@ -87,7 +87,7 @@ export default function Setup({ onReady }: { onReady: () => void }) {
       }
 
       await axios.post('/api/funding/save', { sessionId, privateKey: key })
-      localStorage.setItem(FUNDING_KEY, key)
+      if (import.meta.env.DEV) localStorage.setItem(FUNDING_KEY, key)
       onReady()
     } catch (err: any) {
       const msg = err.response?.data?.error ?? err.message ?? 'Failed to save. Check your key format.'
@@ -111,7 +111,7 @@ export default function Setup({ onReady }: { onReady: () => void }) {
 
       Keypair.fromSecretKey(bs58.decode(key))
       await axios.post('/api/funding/save', { sessionId, privateKey: key })
-      localStorage.setItem(FUNDING_KEY, key)
+      if (import.meta.env.DEV) localStorage.setItem(FUNDING_KEY, key)
       onReady()
     } catch (err: any) {
       if (err.message?.includes('Invalid')) {

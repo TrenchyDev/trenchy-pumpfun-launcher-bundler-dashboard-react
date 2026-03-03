@@ -47,10 +47,16 @@ router.delete('/imported/:id', (req: Request, res: Response) => {
 });
 
 router.get('/funding', fundingMiddleware, async (req: FundingRequest, res: Response) => {
+  if (req.query.refresh === '1') solana.resetConnection();
   try {
     const kp = solana.getFundingKeypair(req.fundingKeypair);
-    const balance = await solana.getBalance(kp.publicKey);
-    res.json({ publicKey: kp.publicKey.toBase58(), balance });
+    const pubkey = kp.publicKey.toBase58();
+    try {
+      const balance = await solana.getBalance(kp.publicKey);
+      return res.json({ publicKey: pubkey, balance });
+    } catch (balanceErr: any) {
+      return res.json({ publicKey: pubkey, balance: 0, error: balanceErr.message });
+    }
   } catch (err: any) {
     res.json({ publicKey: '', balance: 0, error: err.message });
   }

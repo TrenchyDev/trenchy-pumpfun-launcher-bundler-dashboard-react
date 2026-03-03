@@ -10,14 +10,74 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-let connection: Connection | null = null;
+const FALLBACK_RPC = 'https://api.mainnet-beta.solana.com';
 
-export function getConnection(): Connection {
-  if (!connection) {
-    const endpoint = process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
-    connection = new Connection(endpoint, 'confirmed');
+let mainConnection: Connection | null = null;
+let fallbackConnection: Connection | null = null;
+
+function isRetryableRpcError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('ENOTFOUND') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('socket hang up')
+  );
+}
+
+function getMainConnection(): Connection {
+  if (!mainConnection) {
+    const endpoint = process.env.RPC_ENDPOINT || FALLBACK_RPC;
+    mainConnection = new Connection(endpoint, { commitment: 'confirmed' });
   }
-  return connection;
+  return mainConnection;
+}
+
+function getFallbackConnection(): Connection {
+  if (!fallbackConnection) {
+    fallbackConnection = new Connection(FALLBACK_RPC, { commitment: 'confirmed' });
+  }
+  return fallbackConnection;
+}
+
+/** Connection that tries main RPC first, falls back to free public RPC on failure */
+export function getConnection(): Connection {
+  const main = getMainConnection();
+  const fallback = getFallbackConnection();
+  if (process.env.RPC_ENDPOINT && process.env.RPC_ENDPOINT !== FALLBACK_RPC) {
+    return new Proxy(main, {
+      get(target, prop) {
+        const value = (target as unknown as Record<string | symbol, unknown>)[prop];
+        if (typeof value === 'function') {
+          return (...args: unknown[]) => {
+            const result = (value as (...a: unknown[]) => unknown).apply(target, args);
+            if (result && typeof (result as Promise<unknown>).then === 'function') {
+              return (result as Promise<unknown>).catch((err: unknown) => {
+                if (isRetryableRpcError(err)) {
+                  const fallbackFn = (fallback as unknown as Record<string | symbol, unknown>)[prop];
+                  if (typeof fallbackFn === 'function') {
+                    return (fallbackFn as (...a: unknown[]) => unknown).apply(fallback, args);
+                  }
+                }
+                throw err;
+              });
+            }
+            return result;
+          };
+        }
+        return value;
+      },
+    }) as Connection;
+  }
+  return main;
+}
+
+/** Reset cached connections — use when RPC may be stale or after config change */
+export function resetConnection(): void {
+  mainConnection = null;
+  fallbackConnection = null;
 }
 
 export function getFundingKeypair(override?: Keypair): Keypair {
@@ -29,7 +89,7 @@ export function getFundingKeypair(override?: Keypair): Keypair {
 
 export async function getBalance(pubkey: PublicKey): Promise<number> {
   const conn = getConnection();
-  const lamports = await conn.getBalance(pubkey);
+  const lamports = await conn.getBalance(pubkey, 'finalized');
   return lamports / LAMPORTS_PER_SOL;
 }
 

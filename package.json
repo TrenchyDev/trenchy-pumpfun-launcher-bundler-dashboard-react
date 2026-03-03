@@ -3,12 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -n fe,be -c cyan,green \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev": "concurrently -n be,fe -c green,cyan \"npm run dev:backend\" \"wait-on http://localhost:3001/api/health -t 30000 && npm run dev:frontend\"",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:backend": "cd backend && npm run dev",
-    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install"
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "build": "npm run install:all && cd backend && npm run build && cd ../frontend && tsc -b && npx vite build --outDir ../backend/public",
+    "start": "cd backend && node dist/index.js"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "wait-on": "^8.0.1"
   }
 }
