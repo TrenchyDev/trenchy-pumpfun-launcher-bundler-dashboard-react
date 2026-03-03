@@ -223,7 +223,7 @@ router.post('/gather', fundingMiddleware, async (req: FundingRequest, res: Respo
   if (launchId) {
     wallets = wallets.filter(w => w.launchId === launchId);
   }
-  const conn = solana.getConnectionForSession(req.sessionId);
+  const conn = await solana.getConnectionForSession(req.sessionId);
 
   const TX_FEE_LAMPORTS = 5000;
 
@@ -281,7 +281,7 @@ router.post('/gather', fundingMiddleware, async (req: FundingRequest, res: Respo
 
 router.post('/close-token-accounts', fundingMiddleware, async (req: FundingRequest, res: Response) => {
   const fundingKp = solana.getFundingKeypair(req.fundingKeypair);
-  const conn = solana.getConnectionForSession(req.sessionId);
+  const conn = await solana.getConnectionForSession(req.sessionId);
   const archivedWallets = vault.listWallets({ status: 'archived' }).filter(w => w.type !== 'funding');
 
   const results: { publicKey: string; closed: number; recoveredSol: number; error?: string }[] = [];

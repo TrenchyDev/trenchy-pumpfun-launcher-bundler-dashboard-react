@@ -182,7 +182,7 @@ export async function executeLaunch(
   const { readLaunches, saveLaunch, emit } = deps;
   const fundingKp = fundingKeypair;
   const overrides = sessionId ? await sessionOverrides.getOverrides(sessionId) : {};
-  const jitoTipLamports = overrides.jitoTipLamports ?? Number(process.env.JITO_TIP_LAMPORTS) || 5_000_000;
+  const jitoTipLamports = overrides.jitoTipLamports ?? (Number(process.env.JITO_TIP_LAMPORTS) || 5_000_000);
   const launch = readLaunches().find(l => l.id === launchId)!;
   launch.status = 'running';
   saveLaunch(launch);

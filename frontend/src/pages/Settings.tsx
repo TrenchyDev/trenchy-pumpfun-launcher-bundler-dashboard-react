@@ -22,7 +22,6 @@ type FundingStep = 'choose' | 'create' | 'import' | 'save-key'
 export default function Settings() {
   const [entries, setEntries] = useState<EnvEntry[]>([])
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [fundingConfigured, setFundingConfigured] = useState<boolean | null>(null)
