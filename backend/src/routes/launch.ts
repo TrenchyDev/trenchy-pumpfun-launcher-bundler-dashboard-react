@@ -126,6 +126,7 @@ router.post('/', fundingMiddleware, async (req: FundingRequest, res: Response) =
 
   res.json({ launchId, status: 'pending' });
 
+  const sessionId = (req.headers['x-session-id'] as string)?.trim();
   executeLaunch(launchId, {
     tokenName,
     tokenSymbol,
@@ -149,7 +150,7 @@ router.post('/', fundingMiddleware, async (req: FundingRequest, res: Response) =
     devWalletId: devWalletId || undefined,
     bundleWalletIds: bundleWalletIds || undefined,
     holderWalletIds: holderWalletIds || undefined,
-  }, { readLaunches, saveLaunch, emit }, req.fundingKeypair!).catch(err => {
+  }, { readLaunches, saveLaunch, emit }, req.fundingKeypair!, sessionId).catch(err => {
     console.error('[Launch] Fatal error:', err);
   });
 });

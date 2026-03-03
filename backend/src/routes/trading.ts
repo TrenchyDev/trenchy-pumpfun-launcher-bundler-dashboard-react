@@ -118,7 +118,8 @@ router.post('/execute', async (req: Request, res: Response) => {
   try {
     const keypair = vault.getKeypair(walletId);
     const mintPubkey = new PublicKey(mint);
-    const conn = solana.getConnection();
+    const sessionId = (req.headers['x-session-id'] as string)?.trim();
+    const conn = await solana.getConnectionForSession(sessionId);
     const { blockhash } = await conn.getLatestBlockhash('confirmed');
 
     let instructions;
@@ -205,7 +206,8 @@ router.post('/rapid-sell', async (req: Request, res: Response) => {
     }
   }
   const mintPubkey = new PublicKey(mint);
-  const conn = solana.getConnection();
+  const sessionId = (req.headers['x-session-id'] as string)?.trim();
+  const conn = await solana.getConnectionForSession(sessionId);
 
   const processWallet = async (w: vault.StoredWallet) => {
     try {
@@ -317,7 +319,8 @@ router.get('/creator-fees-available', async (req: Request, res: Response) => {
 
   const devWallet = devWallets.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
   const keypair = vault.getKeypair(devWallet.id);
-  const conn = solana.getConnection();
+  const sessionId = (req.headers['x-session-id'] as string)?.trim();
+  const conn = await solana.getConnectionForSession(sessionId);
   const sdk = new OnlinePumpSdk(conn);
 
   const balance = await suppressSdkWarns(() => sdk.getCreatorVaultBalanceBothPrograms(keypair.publicKey));
@@ -350,7 +353,8 @@ router.post('/collect-creator-fees', fundingMiddleware, async (req: FundingReque
 
     const devWallet = devWallets.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
     const keypair = vault.getKeypair(devWallet.id);
-    const conn = solana.getConnection();
+    const sessionId = (req.headers['x-session-id'] as string)?.trim();
+    const conn = await solana.getConnectionForSession(sessionId);
     const sdk = new OnlinePumpSdk(conn);
     const fundingKp = solana.getFundingKeypair(req.fundingKeypair);
     let fundedFromFunding = false;
@@ -487,9 +491,10 @@ function readLaunches(): LaunchRecord[] {
   try { return JSON.parse(fs.readFileSync(LAUNCHES_FILE, 'utf8') || '[]'); } catch { return []; }
 }
 
-router.get('/all-unclaimed-fees', async (_req: Request, res: Response) => {
+router.get('/all-unclaimed-fees', async (req: Request, res: Response) => {
   const launches = readLaunches().filter(l => l.status === 'confirmed' && l.mintAddress);
-  const conn = solana.getConnection();
+  const sessionId = (req.headers['x-session-id'] as string)?.trim();
+  const conn = await solana.getConnectionForSession(sessionId);
   const sdk = new OnlinePumpSdk(conn);
 
   const results: {
@@ -538,7 +543,8 @@ router.post('/collect-all-fees', fundingMiddleware, async (req: FundingRequest, 
     return res.status(400).json({ error: 'launchIds array required' });
   }
 
-  const conn = solana.getConnection();
+  const sessionId = (req.headers['x-session-id'] as string)?.trim();
+  const conn = await solana.getConnectionForSession(sessionId);
   const sdk = new OnlinePumpSdk(conn);
   const fundingKp = solana.getFundingKeypair(req.fundingKeypair);
 

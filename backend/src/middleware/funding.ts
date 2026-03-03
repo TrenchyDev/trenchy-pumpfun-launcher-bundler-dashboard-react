@@ -35,6 +35,7 @@ export async function fundingMiddleware(req: FundingRequest, res: Response, next
   if (envKey && envKey !== 'YOUR_BASE58_PRIVATE_KEY_HERE') {
     try {
       req.fundingKeypair = Keypair.fromSecretKey(bs58.decode(envKey));
+      req.sessionId = sessionIdFromHeader || undefined;
       return next();
     } catch {}
   }

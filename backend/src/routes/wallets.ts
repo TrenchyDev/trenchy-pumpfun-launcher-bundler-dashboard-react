@@ -51,8 +51,9 @@ router.get('/funding', fundingMiddleware, async (req: FundingRequest, res: Respo
   try {
     const kp = solana.getFundingKeypair(req.fundingKeypair);
     const pubkey = kp.publicKey.toBase58();
+    const conn = await solana.getConnectionForSession(req.sessionId);
     try {
-      const balance = await solana.getBalance(kp.publicKey);
+      const balance = await solana.getBalance(kp.publicKey, conn);
       return res.json({ publicKey: pubkey, balance });
     } catch (balanceErr: any) {
       return res.json({ publicKey: pubkey, balance: 0, error: balanceErr.message });
@@ -222,7 +223,7 @@ router.post('/gather', fundingMiddleware, async (req: FundingRequest, res: Respo
   if (launchId) {
     wallets = wallets.filter(w => w.launchId === launchId);
   }
-  const conn = solana.getConnection();
+  const conn = solana.getConnectionForSession(req.sessionId);
 
   const TX_FEE_LAMPORTS = 5000;
 
@@ -280,7 +281,7 @@ router.post('/gather', fundingMiddleware, async (req: FundingRequest, res: Respo
 
 router.post('/close-token-accounts', fundingMiddleware, async (req: FundingRequest, res: Response) => {
   const fundingKp = solana.getFundingKeypair(req.fundingKeypair);
-  const conn = solana.getConnection();
+  const conn = solana.getConnectionForSession(req.sessionId);
   const archivedWallets = vault.listWallets({ status: 'archived' }).filter(w => w.type !== 'funding');
 
   const results: { publicKey: string; closed: number; recoveredSol: number; error?: string }[] = [];

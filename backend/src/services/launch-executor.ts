@@ -5,6 +5,7 @@ import * as vault from './vault';
 import * as solana from './solana';
 import * as pumpfun from './pumpfun';
 import * as jito from './jito';
+import * as sessionOverrides from './session-overrides';
 import * as lut from './lut';
 import * as vanity from './vanity';
 import { tracker, FormattedTrade } from './pumpportal';
@@ -176,9 +177,12 @@ export async function executeLaunch(
   params: LaunchParams & { mintAddressMode: string; vanityMintPublicKey: string },
   deps: ExecuteLaunchDeps,
   fundingKeypair: Keypair,
+  sessionId?: string,
 ) {
   const { readLaunches, saveLaunch, emit } = deps;
   const fundingKp = fundingKeypair;
+  const overrides = sessionId ? await sessionOverrides.getOverrides(sessionId) : {};
+  const jitoTipLamports = overrides.jitoTipLamports ?? Number(process.env.JITO_TIP_LAMPORTS) || 5_000_000;
   const launch = readLaunches().find(l => l.id === launchId)!;
   launch.status = 'running';
   saveLaunch(launch);
@@ -239,21 +243,22 @@ export async function executeLaunch(
     }
 
     emit(launchId, { stage: 'fund', message: 'Funding wallets...' });
-    const tipSol = (Number(process.env.JITO_TIP_LAMPORTS) || 5_000_000) / LAMPORTS_PER_SOL;
+    const conn = await solana.getConnectionForSession(sessionId);
+    const tipSol = jitoTipLamports / LAMPORTS_PER_SOL;
     const devExtra = params.useJito ? tipSol + 0.1 : 0.1;
     const devFundAmount = params.devBuyAmount + devExtra;
-    await solana.transferSol(fundingKp, devKp.publicKey, devFundAmount);
+    await solana.transferSol(fundingKp, devKp.publicKey, devFundAmount, { conn });
 
     for (let i = 0; i < bundleWallets.length; i++) {
       await new Promise(r => setTimeout(r, 250));
       const bundleAmount = (params.bundleSwapAmounts[i] || 0.5) + 0.02;
-      await solana.transferSol(fundingKp, bundleWallets[i].keypair.publicKey, bundleAmount);
+      await solana.transferSol(fundingKp, bundleWallets[i].keypair.publicKey, bundleAmount, { conn });
     }
 
     for (let i = 0; i < holderWallets.length; i++) {
       await new Promise(r => setTimeout(r, 250));
       const holderAmount = (params.holderSwapAmounts[i] || 0.5) + 0.01;
-      await solana.transferSol(fundingKp, holderWallets[i].keypair.publicKey, holderAmount);
+      await solana.transferSol(fundingKp, holderWallets[i].keypair.publicKey, holderAmount, { conn });
     }
 
     emit(launchId, { stage: 'metadata', message: 'Uploading metadata to IPFS...' });
@@ -290,7 +295,6 @@ export async function executeLaunch(
     }
 
     emit(launchId, { stage: 'build-txs', message: 'Building transactions...' });
-    const conn = solana.getConnection();
     const { blockhash } = await conn.getLatestBlockhash('confirmed');
 
     const createAndBuyIxs = await pumpfun.buildCreateAndBuyIxs({

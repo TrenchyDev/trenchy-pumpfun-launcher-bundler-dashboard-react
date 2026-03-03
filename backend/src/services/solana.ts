@@ -9,6 +9,7 @@ import {
   SendTransactionError,
 } from '@solana/web3.js';
 import bs58 from 'bs58';
+import * as sessionOverrides from './session-overrides';
 
 const FALLBACK_RPC = 'https://api.mainnet-beta.solana.com';
 
@@ -27,9 +28,11 @@ function isRetryableRpcError(err: unknown): boolean {
   );
 }
 
-function getMainConnection(): Connection {
+function getMainConnection(rpcOverride?: string): Connection {
+  const endpoint = rpcOverride?.trim() || process.env.RPC_ENDPOINT || FALLBACK_RPC;
+  if (!rpcOverride && mainConnection) return mainConnection;
+  if (rpcOverride) return new Connection(rpcOverride, { commitment: 'confirmed' });
   if (!mainConnection) {
-    const endpoint = process.env.RPC_ENDPOINT || FALLBACK_RPC;
     mainConnection = new Connection(endpoint, { commitment: 'confirmed' });
   }
   return mainConnection;
@@ -42,9 +45,15 @@ function getFallbackConnection(): Connection {
   return fallbackConnection;
 }
 
+/** Connection for a session (uses user RPC override if set, else server RPC) */
+export async function getConnectionForSession(sessionId?: string): Promise<Connection> {
+  const o = sessionId ? await sessionOverrides.getOverrides(sessionId) : {};
+  return getConnection(o.rpcEndpoint);
+}
+
 /** Connection that tries main RPC first, falls back to free public RPC on failure */
-export function getConnection(): Connection {
-  const main = getMainConnection();
+export function getConnection(rpcOverride?: string): Connection {
+  const main = getMainConnection(rpcOverride);
   const fallback = getFallbackConnection();
   if (process.env.RPC_ENDPOINT && process.env.RPC_ENDPOINT !== FALLBACK_RPC) {
     return new Proxy(main, {
@@ -87,9 +96,9 @@ export function getFundingKeypair(override?: Keypair): Keypair {
   return Keypair.fromSecretKey(bs58.decode(key));
 }
 
-export async function getBalance(pubkey: PublicKey): Promise<number> {
-  const conn = getConnection();
-  const lamports = await conn.getBalance(pubkey, 'finalized');
+export async function getBalance(pubkey: PublicKey, conn?: Connection): Promise<number> {
+  const c = conn ?? getConnection();
+  const lamports = await c.getBalance(pubkey, 'finalized');
   return lamports / LAMPORTS_PER_SOL;
 }
 
@@ -97,9 +106,9 @@ export async function transferSol(
   from: Keypair,
   to: PublicKey,
   solAmount: number,
-  opts?: { maxRetries?: number },
+  opts?: { maxRetries?: number; conn?: Connection },
 ): Promise<string> {
-  const conn = getConnection();
+  const conn = opts?.conn ?? getConnection();
   const lamports = Math.round(solAmount * LAMPORTS_PER_SOL);
   const maxRetries = opts?.maxRetries ?? 3;
 
@@ -153,17 +162,18 @@ export async function transferSol(
 export async function executeTransaction(
   tx: VersionedTransaction,
   signers: Keypair[],
+  conn?: Connection,
 ): Promise<string> {
-  const conn = getConnection();
+  const c = conn ?? getConnection();
   tx.sign(signers);
-  const sig = await conn.sendTransaction(tx, { skipPreflight: true });
-  await conn.confirmTransaction(sig, 'confirmed');
+  const sig = await c.sendTransaction(tx, { skipPreflight: true });
+  await c.confirmTransaction(sig, 'confirmed');
   return sig;
 }
 
-export async function sendRawTransaction(serialized: Buffer): Promise<string> {
-  const conn = getConnection();
-  const sig = await conn.sendRawTransaction(serialized, {
+export async function sendRawTransaction(serialized: Buffer, conn?: Connection): Promise<string> {
+  const c = conn ?? getConnection();
+  const sig = await c.sendRawTransaction(serialized, {
     skipPreflight: true,
     maxRetries: 3,
   });

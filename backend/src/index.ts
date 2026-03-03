@@ -28,6 +28,7 @@ import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 import './db';
 import { initFundingStore } from './services/funding-store';
+import { initSessionOverrides } from './services/session-overrides';
 import fundingRoutes from './routes/funding';
 import walletRoutes from './routes/wallets';
 import launchRoutes from './routes/launch';
@@ -117,6 +118,9 @@ function tryListen(attempt: number): void {
 (async () => {
   await initFundingStore().catch(err => {
     console.error('[Backend] FundingStore init failed:', err);
+  });
+  await initSessionOverrides().catch(err => {
+    console.error('[Backend] SessionOverrides init failed:', err);
   });
   tryListen(0);
 })();

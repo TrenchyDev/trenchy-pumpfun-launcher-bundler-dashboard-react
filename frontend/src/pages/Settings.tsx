@@ -13,8 +13,6 @@ import { SESSION_KEY, FUNDING_KEY, getOrCreateSessionId } from './Setup'
 interface EnvEntry {
   key: string
   label: string
-  value: string
-  sensitive: boolean
   required: boolean
   isSet: boolean
 }
@@ -23,8 +21,6 @@ type FundingStep = 'choose' | 'create' | 'import' | 'save-key'
 
 export default function Settings() {
   const [entries, setEntries] = useState<EnvEntry[]>([])
-  const [draft, setDraft] = useState<Record<string, string>>({})
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,13 +41,27 @@ export default function Settings() {
   const [fundingError, setFundingError] = useState<string | null>(null)
   const [fundingLoading, setFundingLoading] = useState(false)
 
+  const [overrides, setOverrides] = useState<{ rpcEndpoint: string; birdeyeApiKey: string; jitoTipLamports: string }>({ rpcEndpoint: '', birdeyeApiKey: '', jitoTipLamports: '' })
+  const [overridesDirty, setOverridesDirty] = useState(false)
+  const [overridesSaved, setOverridesSaved] = useState(false)
+
   useEffect(() => {
     axios.get('/api/env').then(r => {
       setEntries(r.data.entries)
-      const d: Record<string, string> = {}
-      for (const e of r.data.entries) d[e.key] = e.value
-      setDraft(d)
     })
+  }, [])
+
+  const [birdeyeConfigured, setBirdeyeConfigured] = useState(false)
+
+  useEffect(() => {
+    axios.get('/api/env/overrides').then(r => {
+      setOverrides({
+        rpcEndpoint: r.data.rpcEndpoint ?? '',
+        birdeyeApiKey: '',
+        jitoTipLamports: r.data.jitoTipLamports != null ? String(r.data.jitoTipLamports) : '',
+      })
+      setBirdeyeConfigured(r.data.birdeyeApiKeySet === true)
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -69,30 +79,29 @@ export default function Settings() {
       .catch(() => setFundingConfigured(false))
   }, [])
 
-  const dirty = entries.some(e => draft[e.key] !== e.value)
-  const missingRequired = entries.filter(e => e.required && !draft[e.key]?.trim())
+  const missingRequired = entries.filter(e => e.required && !e.isSet)
 
-  async function save() {
+  async function saveOverrides() {
     setSaving(true)
     setError(null)
-    setSaved(false)
+    setOverridesSaved(false)
     try {
-      await axios.put('/api/env', { values: draft })
-      const r = await axios.get('/api/env')
-      setEntries(r.data.entries)
-      setSaved(true)
-      setTimeout(() => setSaved(false), 3000)
+      const jitoStr = overrides.jitoTipLamports.trim()
+      const jitoNum = jitoStr ? parseInt(jitoStr, 10) : null
+      await axios.put('/api/env/overrides', {
+        rpcEndpoint: overrides.rpcEndpoint.trim() || undefined,
+        birdeyeApiKey: overrides.birdeyeApiKey.trim() || undefined,
+        jitoTipLamports: !jitoStr ? null : (jitoNum != null && !isNaN(jitoNum) ? jitoNum : undefined),
+      })
+      setOverridesDirty(false)
+      setBirdeyeConfigured(!!overrides.birdeyeApiKey.trim())
+      setOverridesSaved(true)
+      setTimeout(() => setOverridesSaved(false), 3000)
     } catch (err: any) {
       setError(err.response?.data?.error ?? err.message)
     } finally {
       setSaving(false)
     }
-  }
-
-  function mask(val: string) {
-    if (!val) return ''
-    if (val.length <= 8) return '•'.repeat(val.length)
-    return val.slice(0, 4) + '•'.repeat(Math.min(val.length - 8, 20)) + val.slice(-4)
   }
 
   function refreshFundingStatus() {
@@ -419,66 +428,55 @@ export default function Settings() {
           alignItems: 'center',
           justifyContent: 'space-between',
         }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>Environment Variables</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>Your settings</span>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            {saved && <span style={{ fontSize: 12, color: '#34d399' }}>Saved</span>}
+            {overridesSaved && <span style={{ fontSize: 12, color: '#34d399' }}>Saved</span>}
             {error && <span style={{ fontSize: 12, color: '#f87171' }}>{error}</span>}
             <button
               className="btn-primary"
-              disabled={!dirty || saving}
-              onClick={save}
+              disabled={!overridesDirty || saving}
+              onClick={saveOverrides}
               style={{ padding: '7px 16px', fontSize: 12 }}
             >
-              {saving ? 'Saving...' : 'Save Changes'}
+              {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </div>
 
-        <div style={{ padding: '8px 0' }}>
-          {entries.map(entry => (
-            <div key={entry.key} style={{
-              padding: '14px 20px',
-              borderBottom: '1px solid rgba(37, 51, 70, 0.25)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8' }}>
-                  {entry.label}
-                </label>
-                {entry.required && !draft[entry.key]?.trim() && (
-                  <span style={{
-                    fontSize: 9, fontWeight: 700, color: '#f87171',
-                    background: 'rgba(239,68,68,0.12)', padding: '1px 6px',
-                    borderRadius: 4, textTransform: 'uppercase',
-                  }}>Required</span>
-                )}
-                {!entry.required && (
-                  <span style={{
-                    fontSize: 9, fontWeight: 600, color: '#64748b',
-                    background: 'rgba(100,116,139,0.1)', padding: '1px 6px',
-                    borderRadius: 4, textTransform: 'uppercase',
-                  }}>Optional</span>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  className="input"
-                  type={entry.sensitive && !revealed[entry.key] ? 'password' : 'text'}
-                  value={entry.sensitive && !revealed[entry.key] ? (draft[entry.key] ? mask(draft[entry.key]) : '') : (draft[entry.key] ?? '')}
-                  placeholder={`Enter ${entry.label.toLowerCase()}`}
-                  onFocus={() => { if (entry.sensitive) setRevealed(r => ({ ...r, [entry.key]: true })) }}
-                  onBlur={() => { if (entry.sensitive) setRevealed(r => ({ ...r, [entry.key]: false })) }}
-                  onChange={e => setDraft(d => ({ ...d, [entry.key]: e.target.value }))}
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}
-                />
-              </div>
-              <div style={{ fontSize: 10, color: '#475569', fontFamily: 'var(--font-mono)' }}>
-                {entry.key}
-              </div>
-            </div>
-          ))}
+        <div style={{ padding: '14px 20px' }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>RPC Endpoint (optional)</label>
+            <input
+              className="input"
+              type="text"
+              value={overrides.rpcEndpoint}
+              onChange={e => { setOverrides(o => ({ ...o, rpcEndpoint: e.target.value })); setOverridesDirty(true) }}
+              placeholder="Leave empty to use server RPC. Or paste your own Alchemy/Helius URL..."
+              style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 13 }}
+            />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Birdeye API Key (optional)</label>
+            <input
+              className="input"
+              type="password"
+              value={overrides.birdeyeApiKey}
+              onChange={e => { setOverrides(o => ({ ...o, birdeyeApiKey: e.target.value })); setOverridesDirty(true); setBirdeyeConfigured(false) }}
+              placeholder={birdeyeConfigured ? 'Configured. Enter new value to replace.' : 'Leave empty to use server key. Or enter your own...'}
+              style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 13 }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Jito Tip (lamports)</label>
+            <input
+              className="input"
+              type="text"
+              value={overrides.jitoTipLamports}
+              onChange={e => { setOverrides(o => ({ ...o, jitoTipLamports: e.target.value })); setOverridesDirty(true) }}
+              placeholder="e.g. 5000000 (leave empty for default)"
+              style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 13 }}
+            />
+          </div>
         </div>
       </div>
 
@@ -491,8 +489,7 @@ export default function Settings() {
         color: '#64748b',
         lineHeight: 1.6,
       }}>
-        Changes are written to the <code style={{ color: '#94a3b8' }}>.env</code> file and applied to the running server immediately.
-        Some changes (like RPC endpoint) may require restarting active operations to take full effect.
+        All settings are saved in your local browser session and persist when you return. Your data is stored securely on the server and associated with your browser.
       </div>
     </div>
   )
