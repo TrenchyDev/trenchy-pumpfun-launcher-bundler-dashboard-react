@@ -1,6 +1,6 @@
 # Trencher Bundler V2
 
-<video src="https://raw.githubusercontent.com/TrenchyDev/trenchy-pumpfun-launcher-bundler-dashboard-react/master/frontend/public/bandicam%202026-03-04%2000-33-34-698.mp4" controls width="640"></video>
+**[▶ Watch demo video](https://github.com/TrenchyDev/trenchy-pumpfun-launcher-bundler-dashboard-react/blob/master/frontend/public/bandicam%202026-03-04%2000-33-34-698.mp4)** — *Click to view*
 
 The next-generation Solana token launcher for pump.fun. Built from the ground up on the official `@pump-fun/pump-sdk` with Jito bundle support, real-time trade tracking, AI token generation, and a wallet vault.
 
