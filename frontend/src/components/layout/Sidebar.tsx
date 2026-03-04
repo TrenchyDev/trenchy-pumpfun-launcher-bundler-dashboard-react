@@ -44,7 +44,7 @@ export default function Sidebar({ collapsed, onCollapsedChange, envWarning = fal
         }}
       >
         <img
-          src="/image/trenchy_toolz_transparent.png"
+          src="/image/trenchy_toolz_wide_transparent.png"
           alt="Trencher"
           style={{
             height: collapsed ? 28 : 36,
