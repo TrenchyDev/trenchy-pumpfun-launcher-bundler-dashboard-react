@@ -10,6 +10,7 @@ interface LayoutProps {
 
 export default function Layout({ onClearSession }: LayoutProps) {
   const [missingKeys, setMissingKeys] = useState<string[]>([])
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -20,8 +21,16 @@ export default function Layout({ onClearSession }: LayoutProps) {
     <div className="layout-root">
       <div className="noise-bg" />
       <div className="ambient-glow" />
-      <Sidebar envWarning={missingKeys.length > 0} onClearSession={onClearSession} />
-      <div className="main-area">
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onCollapsedChange={setSidebarCollapsed}
+        envWarning={missingKeys.length > 0}
+        onClearSession={onClearSession}
+      />
+      <div
+        className="main-area"
+        style={{ marginLeft: sidebarCollapsed ? 64 : 220, transition: 'margin-left 0.2s ease' }}
+      >
         <Header />
         {missingKeys.length > 0 && (
           <div

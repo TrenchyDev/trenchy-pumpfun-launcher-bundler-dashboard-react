@@ -171,7 +171,7 @@ export default function Setup({ onReady }: { onReady: () => void }) {
             marginBottom: 20,
           }}>
             <img
-              src="/image/trencherlogo.png"
+              src="/image/trenchy_toolz_transparent.png"
               alt="Trencher"
               style={{ height: 48, width: 'auto', objectFit: 'contain' }}
               onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}

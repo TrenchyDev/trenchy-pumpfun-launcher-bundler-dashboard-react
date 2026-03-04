@@ -83,6 +83,42 @@ router.get('/:id/stream', (req: Request, res: Response) => {
   });
 });
 
+router.post('/:id/relaunch', fundingMiddleware, async (req: FundingRequest, res: Response) => {
+  const id = String(req.params.id);
+  const launches = readLaunches();
+  const source = launches.find(l => l.id === id);
+  if (!source) return res.status(404).json({ error: 'Launch not found' });
+  if (!source.params) {
+    return res.status(400).json({
+      error: 'Cannot relaunch: this launch was created before relaunch was available. Use the Launch page to create a new token.',
+    });
+  }
+
+  const p = source.params;
+  const launchId = uuid();
+  const launch: LaunchRecord = {
+    id: launchId,
+    tokenName: p.tokenName,
+    tokenSymbol: p.tokenSymbol,
+    imageUrl: p.imageUrl || undefined,
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    params: { ...p, mintAddressMode: 'random', vanityMintPublicKey: '' },
+  };
+  saveLaunch(launch);
+
+  res.json({ launchId, status: 'pending' });
+
+  const sessionId = (req.headers['x-session-id'] as string)?.trim();
+  executeLaunch(launchId, {
+    ...p,
+    mintAddressMode: 'random',
+    vanityMintPublicKey: '',
+  }, { readLaunches, saveLaunch, emit }, req.fundingKeypair!, sessionId).catch(err => {
+    console.error('[Launch] Relaunch fatal error:', err);
+  });
+});
+
 router.post('/', fundingMiddleware, async (req: FundingRequest, res: Response) => {
   const {
     tokenName,
@@ -114,6 +150,30 @@ router.post('/', fundingMiddleware, async (req: FundingRequest, res: Response) =
   }
 
   const launchId = uuid();
+  const params = {
+    tokenName,
+    tokenSymbol,
+    description: description || '',
+    imageUrl: imageUrl || '',
+    website: website || '',
+    twitter: twitter || '',
+    telegram: telegram || '',
+    devBuyAmount,
+    bundleWalletCount,
+    bundleSwapAmounts,
+    holderWalletCount,
+    holderSwapAmounts,
+    holderAutoBuy,
+    holderAutoBuyDelay,
+    useJito,
+    useLUT,
+    strictBundle,
+    mintAddressMode,
+    vanityMintPublicKey: vanityMintPublicKey || '',
+    devWalletId: devWalletId || undefined,
+    bundleWalletIds: bundleWalletIds || undefined,
+    holderWalletIds: holderWalletIds || undefined,
+  };
   const launch: LaunchRecord = {
     id: launchId,
     tokenName,
@@ -121,6 +181,7 @@ router.post('/', fundingMiddleware, async (req: FundingRequest, res: Response) =
     imageUrl: imageUrl || undefined,
     status: 'pending',
     createdAt: new Date().toISOString(),
+    params,
   };
   saveLaunch(launch);
 

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import axios from 'axios'
-import { ArrowPathIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ArrowPathRoundedSquareIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import type { Launch, AllLaunch, WalletBalance, LiveTrade, RapidSellSummary, LaunchStage, CloseoutResult } from '../types'
 import { fmtSol, fmtTokens, fmtPct, BADGE_COLORS } from '../types'
 import ExternalLinks from '../components/ui/ExternalLinks'
@@ -138,6 +138,7 @@ export default function Trading() {
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchResult, setLaunchResult] = useState<{ signature: string; mint: string } | null>(null)
   const [activeLaunchId, setActiveLaunchId] = useState<string | null>(null)
+  const [relaunching, setRelaunching] = useState(false)
   const launchEsRef = useRef<EventSource | null>(null)
   const refreshAfterLaunchRef = useRef<() => void>(() => {})
   const launchInProgressRef = useRef(false)
@@ -206,8 +207,13 @@ export default function Trading() {
     // Clear location state so a page refresh doesn't re-connect
     window.history.replaceState({}, '')
 
-    return () => { es.close() }
+    return () => { es.close(); launchEsRef.current = null }
   }, [incomingLaunch?.launchId])
+
+  // Cleanup launch stream on unmount (e.g. from relaunch)
+  useEffect(() => () => {
+    if (launchEsRef.current) { launchEsRef.current.close(); launchEsRef.current = null }
+  }, [])
 
   const selectedLaunch = launches.find(l => l.mintAddress === selectedMint)
   const activeMint = selectedMint || mintInput
@@ -500,6 +506,61 @@ export default function Trading() {
     } catch (err: any) { console.error(err) }
   }
 
+  const handleRelaunch = async () => {
+    if (!selectedLaunch?.id) return
+    if (!confirm(`Relaunch ${selectedLaunch.tokenName} ($${selectedLaunch.tokenSymbol}) with a new mint address? Same settings, new token.`)) return
+    setRelaunching(true)
+    try {
+      if (launchEsRef.current) { launchEsRef.current.close(); launchEsRef.current = null }
+      const res = await axios.post(`/api/launch/${selectedLaunch.id}/relaunch`)
+      const { launchId } = res.data
+      setLaunchStages([])
+      setLaunchError(null)
+      setLaunchResult(null)
+      setActiveLaunchId(launchId)
+      setSelectedMint('')
+      setMintInput('')
+      setWalletBalances([])
+      setLiveTrades([])
+      launchInProgressRef.current = true
+
+      const es = new EventSource(`/api/launch/${launchId}/stream`)
+      launchEsRef.current = es
+
+      es.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        if (data.stage === 'done') {
+          launchInProgressRef.current = false
+          setLaunchResult({ signature: data.signature, mint: data.mint })
+          setLaunchStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'done' } : s))
+          if (data.mint) setSelectedMint(data.mint)
+          fetchLaunches()
+          es.close()
+          launchEsRef.current = null
+        } else if (data.stage === 'error') {
+          launchInProgressRef.current = false
+          setLaunchError(data.message)
+          setLaunchStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'error' } : s))
+          es.close()
+          launchEsRef.current = null
+        } else {
+          setLaunchStages(prev => [...prev.map(s => s.status === 'active' ? { ...s, status: 'done' as const } : s), { stage: data.stage, message: data.message, status: 'active' as const }])
+        }
+      }
+      es.onerror = () => {
+        launchInProgressRef.current = false
+        setLaunchError('Connection to launch stream lost')
+        es.close()
+        launchEsRef.current = null
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Relaunch failed'
+      setLaunchError(msg)
+    } finally {
+      setRelaunching(false)
+    }
+  }
+
   const externalVolume = useMemo(() => {
     const ext = liveTrades.filter(t => !t.isOurWallet)
     let buys = 0, sells = 0
@@ -637,6 +698,18 @@ export default function Trading() {
           />
         </div>
 
+        {selectedLaunch && (
+          <button
+            className="btn-secondary"
+            style={{ fontSize: 10, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 6 }}
+            disabled={relaunching || !!activeLaunchId}
+            onClick={handleRelaunch}
+            title="Relaunch same token with new mint address"
+          >
+            <ArrowPathRoundedSquareIcon style={{ width: 14, height: 14 }} />
+            {relaunching ? 'Relaunching...' : 'Relaunch'}
+          </button>
+        )}
         <ExternalLinks mint={activeMint} />
       </div>
 
