@@ -165,6 +165,9 @@ async function runAutoSell(
   });
 }
 
+const CONFIRM_POLL_MS = 600;  // Faster polling (was 2000ms) — detects confirmation sooner
+const PROGRESS_INTERVAL_MS = 4000;  // Show progress every 4s (was 10s)
+
 export async function waitForSignatureConfirmation(
   conn: ReturnType<typeof solana.getConnection>,
   signature: string,
@@ -172,7 +175,7 @@ export async function waitForSignatureConfirmation(
   onProgress?: (msg: string) => void,
 ): Promise<boolean> {
   const start = Date.now();
-  let lastProgressAt = 0;
+  let lastProgressAt = -PROGRESS_INTERVAL_MS;  // Allow first progress at ~2s
   while (Date.now() - start < timeoutMs) {
     try {
       const status = (await conn.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
@@ -181,7 +184,7 @@ export async function waitForSignatureConfirmation(
         return true;
       }
       const now = Date.now();
-      if (onProgress && now - lastProgressAt > 10_000) {
+      if (onProgress && now - lastProgressAt > PROGRESS_INTERVAL_MS) {
         lastProgressAt = now;
         const elapsed = Math.round((now - start) / 1000);
         onProgress(`Still waiting for confirmation... (${elapsed}s, sig ${signature.slice(0, 8)}...)`);
@@ -189,7 +192,7 @@ export async function waitForSignatureConfirmation(
     } catch (err) {
       throw err;
     }
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, CONFIRM_POLL_MS));
   }
   return false;
 }

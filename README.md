@@ -92,9 +92,12 @@ JITO_TIP_LAMPORTS=5000000
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `RPC_WEBSOCKET_ENDPOINT` | No | — | WebSocket RPC (e.g. `wss://...`) for faster confirmation. Set if your provider supports it (Alchemy, Helius, QuickNode). |
 | `ENCRYPTION_KEY` | No | auto-generated | Custom key for legacy wallet migration. |
 | `BIRDEYE_API_KEY` | No | — | Reserved for future features. |
 | `GOOGLE_GEMINI_API_KEY` | No | — | Required for AI token generation (name, description, image). |
+
+> **Faster launches:** Use a paid RPC (Helius, QuickNode, Alchemy) and set `RPC_WEBSOCKET_ENDPOINT` to the provider's `wss://` URL. Confirmation polling is now 600ms (was 2s).
 
 > **Note:** There is NO `.env` file in the project root. Only `backend/.env` is loaded by the server.
 

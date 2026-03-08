@@ -29,6 +29,8 @@ function isRetryableRpcError(err: unknown): boolean {
 }
 
 /** Polling-based confirmation — works with HTTP-only RPCs that don't support signatureSubscribe */
+const CONFIRM_POLL_MS = 600; // Faster polling for quicker detection (was 1500ms)
+
 export async function confirmTransactionPolling(
   conn: Connection,
   signature: string,
@@ -42,7 +44,7 @@ export async function confirmTransactionPolling(
     if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
       return;
     }
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, CONFIRM_POLL_MS));
   }
   throw new Error(`Transaction confirmation timeout: ${signature.slice(0, 12)}...`);
 }
@@ -50,9 +52,12 @@ export async function confirmTransactionPolling(
 function getMainConnection(rpcOverride?: string): Connection {
   const endpoint = rpcOverride?.trim() || process.env.RPC_ENDPOINT || FALLBACK_RPC;
   if (!rpcOverride && mainConnection) return mainConnection;
-  if (rpcOverride) return new Connection(rpcOverride, { commitment: 'confirmed' });
+  const wsEndpoint = process.env.RPC_WEBSOCKET_ENDPOINT?.trim();
+  const config: { commitment: 'confirmed'; wsEndpoint?: string } = { commitment: 'confirmed' };
+  if (wsEndpoint) config.wsEndpoint = wsEndpoint; // Enables faster confirmation via signatureSubscribe
+  if (rpcOverride) return new Connection(rpcOverride, config);
   if (!mainConnection) {
-    mainConnection = new Connection(endpoint, { commitment: 'confirmed' });
+    mainConnection = new Connection(endpoint, config);
   }
   return mainConnection;
 }
