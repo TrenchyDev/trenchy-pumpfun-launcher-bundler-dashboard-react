@@ -178,14 +178,19 @@ router.post('/execute', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/rapid-sell', async (req: Request, res: Response) => {
+const MIN_SOL_FOR_SELL_TX = 0.005; // ~5_000_000 lamports — need SOL for tx fees
+
+router.post('/rapid-sell', fundingMiddleware, async (req: FundingRequest, res: Response) => {
   const { mint, percentage = 100, launchId, parallel = true, walletIds, walletTypes } = req.body;
 
   if (!mint) return res.status(400).json({ error: 'mint required' });
 
+  console.log(`[RapidSell] mint=${mint?.slice(0, 8)}... pct=${percentage} walletIds=${JSON.stringify(walletIds)} launchId=${launchId}`);
+
   const pct = Math.max(1, Math.min(100, Number(percentage) || 100));
 
   const sessionId = req.sessionId;
+  const fundingKp = req.fundingKeypair ? solana.getFundingKeypair(req.fundingKeypair) : null;
   let allWallets: vault.StoredWallet[];
   if (walletIds && Array.isArray(walletIds) && walletIds.length > 0) {
     const all = await vault.listWallets({ status: 'active' }, sessionId);
@@ -209,6 +214,11 @@ router.post('/rapid-sell', async (req: Request, res: Response) => {
   }
   const mintPubkey = new PublicKey(mint);
   const conn = await solana.getConnectionForSession(sessionId);
+
+  if (allWallets.length === 0) {
+    console.log('[RapidSell] No wallets to process');
+    return res.json({ summary: { totalWallets: 0, confirmed: 0, sent: 0, skipped: 0, errors: 0 }, results: [] });
+  }
 
   const processWallet = async (w: vault.StoredWallet) => {
     try {
@@ -251,14 +261,47 @@ router.post('/rapid-sell', async (req: Request, res: Response) => {
         return { wallet: w.publicKey, status: 'skipped', reason: 'sell amount is zero' };
       }
 
-      const { instructions, solAmount: expectedSolOut } = await pumpfun.buildSellIxs({
-        mint: mintPubkey,
-        seller: keypair.publicKey,
-        tokenAmount: sellAmount,
-      });
+      // Auto-fund if wallet has no SOL (e.g. after "Recover SOL" / gather left tokens but drained SOL)
+      const solBalance = await conn.getBalance(keypair.publicKey);
+      const solBalanceSol = solBalance / LAMPORTS_PER_SOL;
+      if (solBalanceSol < MIN_SOL_FOR_SELL_TX && fundingKp) {
+        try {
+          await solana.transferSol(fundingKp, keypair.publicKey, 0.01, { conn });
+          console.log(`[RapidSell] Auto-funded ${w.publicKey.slice(0, 8)}... with 0.01 SOL (had ${solBalanceSol.toFixed(6)})`);
+          await new Promise(r => setTimeout(r, 500)); // Brief delay for balance to propagate
+        } catch (fundErr: unknown) {
+          const msg = fundErr instanceof Error ? fundErr.message : String(fundErr);
+          return { wallet: w.publicKey, status: 'error', error: `Insufficient SOL for fees. Fund wallet first: ${msg}` };
+        }
+      } else if (solBalanceSol < MIN_SOL_FOR_SELL_TX && !fundingKp) {
+        return { wallet: w.publicKey, status: 'error', error: 'Insufficient SOL for tx fees. Use "Fund 0.01 SOL" or configure funding wallet.' };
+      }
+
+      let instructions;
+      let expectedSolOut;
+      try {
+        const sellResult = await pumpfun.buildSellIxs({
+          mint: mintPubkey,
+          seller: keypair.publicKey,
+          tokenAmount: sellAmount,
+        });
+        instructions = sellResult.instructions;
+        expectedSolOut = sellResult.solAmount;
+      } catch (sellErr: any) {
+        const msg = sellErr?.message || String(sellErr);
+        console.error(`[RapidSell] buildSellIxs failed for ${w.publicKey.slice(0, 8)}...: ${msg}`);
+        const isGraduated = /bonding curve|sell state|graduated|closed|invalid/i.test(msg);
+        return {
+          wallet: w.publicKey,
+          status: 'error',
+          error: isGraduated
+            ? 'Token may have graduated to Raydium. Sell on pump.fun or via Jupiter/Raydium instead.'
+            : msg,
+        };
+      }
 
       const { blockhash } = await conn.getLatestBlockhash('confirmed');
-      const tx = pumpfun.buildVersionedTx(keypair.publicKey, instructions, blockhash);
+      const tx = pumpfun.buildVersionedTx(keypair.publicKey, instructions!, blockhash);
       tx.sign([keypair]);
 
       const sig = await conn.sendTransaction(tx, { skipPreflight: true });
@@ -268,7 +311,7 @@ router.post('/rapid-sell', async (req: Request, res: Response) => {
         mint,
         type: 'sell',
         trader: keypair.publicKey.toBase58(),
-        solAmount: expectedSolOut.toNumber() / 1e9,
+        solAmount: expectedSolOut!.toNumber() / 1e9,
         tokenAmount: Number(sellAmount.toString()) / 1e6,
         walletType: w.type,
         walletLabel: w.label,
@@ -305,13 +348,33 @@ router.post('/rapid-sell', async (req: Request, res: Response) => {
     errors: typedResults.filter(r => r.status === 'error').length,
   };
 
+  const errResults = typedResults.filter(r => r.status === 'error');
+  if (errResults.length > 0) {
+    const msgs = errResults.map(r => r.error).filter(Boolean);
+    console.log(`[RapidSell] Errors: ${msgs.join('; ')}`);
+  }
+
   res.json({ summary, results: typedResults });
 });
 
+function findLaunchByMint(mint: string): { id: string } | undefined {
+  const file = path.join(__dirname, '../../data/launches.json');
+  if (!fs.existsSync(file)) return undefined;
+  try {
+    const launches = JSON.parse(fs.readFileSync(file, 'utf8') || '[]');
+    return launches.find((l: { mintAddress?: string }) => l.mintAddress === mint);
+  } catch { return undefined; }
+}
+
 /** Get unclaimed creator fees for a launch (read-only, no claim). */
 router.get('/creator-fees-available', async (req: Request, res: Response) => {
-  const launchId = req.query.launchId as string;
-  if (!launchId) return res.status(400).json({ error: 'launchId required' });
+  let launchId = req.query.launchId as string;
+  const mint = req.query.mint as string;
+  if (!launchId && mint) {
+    const launch = findLaunchByMint(mint);
+    if (launch) launchId = launch.id;
+  }
+  if (!launchId) return res.status(400).json({ error: 'launchId or mint query param required' });
 
   const sessionId = req.sessionId;
   const devWallets = (await vault.listWallets({ type: 'dev' }, sessionId)).filter(w => w.launchId === String(launchId));
@@ -341,8 +404,12 @@ router.get('/creator-fees-available', async (req: Request, res: Response) => {
 const FUND_AMOUNT_LAMPORTS = 1_500_000; // ~0.0015 SOL — covers rent-exemption + tx fee
 
 router.post('/collect-creator-fees', fundingMiddleware, async (req: FundingRequest, res: Response) => {
-  const { launchId } = req.body;
-  if (!launchId) return res.status(400).json({ error: 'launchId required' });
+  let { launchId, mint } = req.body;
+  if (!launchId && mint) {
+    const launch = findLaunchByMint(mint);
+    if (launch) launchId = launch.id;
+  }
+  if (!launchId) return res.status(400).json({ error: 'launchId or mint required' });
 
   try {
     tracker.unsubscribeCurrentMint();
@@ -350,9 +417,10 @@ router.post('/collect-creator-fees', fundingMiddleware, async (req: FundingReque
     const sessionId = req.sessionId;
     const devWallets = (await vault.listWallets({ type: 'dev' }, sessionId)).filter(w => w.launchId === String(launchId));
     if (devWallets.length === 0) {
-      return res.status(404).json({ error: `No dev wallet found for launchId ${launchId}` });
+      return res.status(404).json({ error: `No dev wallet found for launch ${launchId}. Ensure you're on the correct launch — select it from Launch History or paste the mint.` });
     }
 
+    // Use the dev wallet that created this launch (newest by createdAt for this launchId)
     const devWallet = devWallets.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
     const keypair = await vault.getKeypair(devWallet.id, sessionId);
     const conn = await solana.getConnectionForSession(sessionId);
