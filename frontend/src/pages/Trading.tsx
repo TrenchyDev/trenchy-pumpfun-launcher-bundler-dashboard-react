@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import axios from 'axios'
-import { ArrowPathIcon, ArrowPathRoundedSquareIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ArrowPathRoundedSquareIcon } from '@heroicons/react/24/outline'
 import type { Launch, AllLaunch, WalletBalance, LiveTrade, RapidSellSummary, LaunchStage, CloseoutResult } from '../types'
 import { fmtSol, fmtTokens, fmtPct, BADGE_COLORS } from '../types'
 import ExternalLinks from '../components/ui/ExternalLinks'
@@ -12,99 +11,9 @@ import BulkSellBar from '../components/ui/BulkSellBar'
 import WalletCard from '../components/ui/WalletCard'
 import LaunchHistory from '../components/ui/LaunchHistory'
 import Tip from '../components/ui/Tip'
+import { SESSION_KEY, getOrCreateSessionId } from './Setup'
 
-function SmartActionButton({ closingOut, activeMint, showCloseoutButton, totalTokens, maxTotalTokens, selectedLaunchId, onCollectFees, onCollectCreatorFees, onCloseOut, onSweep }: {
-  closingOut: boolean; activeMint: string; showCloseoutButton: boolean; totalTokens: number; maxTotalTokens: number; selectedLaunchId?: string;
-  onCollectFees: () => void; onCollectCreatorFees: () => void; onCloseOut: () => void; onSweep: () => void;
-}) {
-  const [open, setOpen] = useState(false)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
-
-  const toggleMenu = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect()
-      setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
-    }
-    setOpen(v => !v)
-  }
-
-  const is95Sold = showCloseoutButton
-  const allSold = totalTokens === 0 && maxTotalTokens > 0
-  const primaryAction = is95Sold
-    ? { label: closingOut ? 'Closing Out...' : 'Close Out Run', handler: onCloseOut, color: '#14b8a6', bg: 'rgba(20,184,166,0.15)', border: 'rgba(20,184,166,0.3)' }
-    : allSold
-      ? { label: closingOut ? 'Sweeping...' : 'Sweep to Funding', handler: onSweep, color: '#818cf8', bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)' }
-      : { label: closingOut ? 'Collecting...' : 'Collect Fees', handler: selectedLaunchId ? onCollectFees : onCollectCreatorFees, color: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.25)' }
-
-  const dropdownItems = [
-    { label: 'Collect Fees', desc: 'Claim creator fees only — no selling or sweeping', handler: selectedLaunchId ? onCollectFees : onCollectCreatorFees },
-    { label: 'Close Out Run', desc: 'Sell remaining, collect fees, sweep all SOL to funding', handler: onCloseOut },
-    { label: 'Sweep to Funding', desc: 'Move all SOL from wallets back to funding', handler: onSweep },
-  ].filter(item => item.label !== primaryAction.label)
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center' }}>
-      <button
-        disabled={closingOut || !activeMint}
-        onClick={primaryAction.handler}
-        style={{
-          fontSize: 10, fontWeight: 700, padding: '5px 14px',
-          borderRadius: '6px 0 0 6px',
-          border: `1px solid ${primaryAction.border}`,
-          borderRight: 'none',
-          background: primaryAction.bg, color: primaryAction.color,
-          cursor: closingOut ? 'wait' : 'pointer',
-          opacity: closingOut || !activeMint ? 0.5 : 1,
-        }}>
-        {primaryAction.label}
-      </button>
-      <button
-        ref={btnRef}
-        disabled={closingOut}
-        onClick={toggleMenu}
-        style={{
-          padding: '5px 6px',
-          borderRadius: '0 6px 6px 0',
-          border: `1px solid ${primaryAction.border}`,
-          background: primaryAction.bg, color: primaryAction.color,
-          cursor: 'pointer',
-          display: 'flex', alignItems: 'center',
-        }}>
-        <ChevronDownIcon style={{ width: 10, height: 10 }} />
-      </button>
-      {open && menuPos && createPortal(
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 99998 }}
-            onClick={() => setOpen(false)} />
-          <div style={{
-            position: 'fixed', top: menuPos.top, right: menuPos.right,
-            background: '#1e293b', border: '1px solid rgba(51,65,85,0.8)',
-            borderRadius: 8, padding: 4, zIndex: 99999, minWidth: 220,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-          }}>
-            {dropdownItems.map(item => (
-              <button key={item.label}
-                onClick={() => { setOpen(false); item.handler() }}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left',
-                  padding: '8px 12px', borderRadius: 6, border: 'none',
-                  background: 'transparent', cursor: 'pointer',
-                  transition: 'background 0.1s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(51,65,85,0.5)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', marginBottom: 2 }}>{item.label}</div>
-                <div style={{ fontSize: 9, color: '#64748b', lineHeight: 1.3 }}>{item.desc}</div>
-              </button>
-            ))}
-          </div>
-        </>,
-        document.body,
-      )}
-    </div>
-  )
-}
+const LAST_LAUNCHED_MINT_KEY = 'pump-launcher:lastLaunchedMint'
 
 export default function Trading() {
   const location = useLocation()
@@ -143,6 +52,7 @@ export default function Trading() {
   const launchEsRef = useRef<EventSource | null>(null)
   const refreshAfterLaunchRef = useRef<() => void>(() => {})
   const launchInProgressRef = useRef(false)
+  const launchSuccessRef = useRef(false)
 
   useEffect(() => {
     if (!incomingLaunch?.launchId || activeLaunchId) return
@@ -151,6 +61,7 @@ export default function Trading() {
     setLaunchStages([])
     setLaunchError(null)
     setLaunchResult(null)
+    launchSuccessRef.current = false
     setSelectedMint('')
     setMintInput('')
     setWalletBalances([])
@@ -166,6 +77,11 @@ export default function Trading() {
       const data = JSON.parse(event.data)
       if (data.stage === 'done') {
         launchInProgressRef.current = false
+        launchSuccessRef.current = true
+        if (data.mint) {
+          lastCompletedMintRef.current = data.mint
+          try { localStorage.setItem(LAST_LAUNCHED_MINT_KEY, data.mint) } catch {}
+        }
         setLaunchResult({ signature: data.signature, mint: data.mint })
         setLaunchStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'done' } : s))
         if (data.mint) {
@@ -210,7 +126,10 @@ export default function Trading() {
 
     es.onerror = () => {
       launchInProgressRef.current = false
-      setLaunchError('Connection to launch stream lost')
+      // Don't show "Failed" if we already received success — connection loss after done is expected
+      if (!launchSuccessRef.current) {
+        setLaunchError('Connection to launch stream lost')
+      }
       es.close()
       launchEsRef.current = null
     }
@@ -230,6 +149,7 @@ export default function Trading() {
   const activeMint = selectedMint || mintInput
   const prevNewestRef = useRef<string | null>(null)
   const selectedMintRef = useRef(selectedMint)
+  const lastCompletedMintRef = useRef<string | null>(null)
   selectedMintRef.current = selectedMint
 
   // Fetch launches
@@ -244,8 +164,24 @@ export default function Trading() {
     setLaunches(confirmed)
 
     if (confirmed.length > 0 && !launchInProgressRef.current) {
-      const newest = confirmed[0]
       const cur = selectedMintRef.current
+      // Prioritize our just-launched token (state may not have updated yet when fetchLaunches runs)
+      const justCompleted = lastCompletedMintRef.current
+      if (justCompleted) {
+        setSelectedMint(justCompleted)
+        setMintInput('')
+        prevNewestRef.current = justCompleted
+        const nowInList = confirmed.some((l: Launch) => l.mintAddress === justCompleted)
+        if (nowInList) lastCompletedMintRef.current = null
+        return
+      }
+      // Prefer last-launched mint from localStorage (survives refresh)
+      const lastLaunched = (() => { try { return localStorage.getItem(LAST_LAUNCHED_MINT_KEY) } catch { return null } })()
+      const preferredLaunch = lastLaunched ? confirmed.find((l: Launch) => l.mintAddress === lastLaunched) : null
+      const newest = preferredLaunch ?? confirmed[0]
+      // Don't overwrite if we have a selected mint that's not in the list yet (e.g. our just-launched token)
+      const ourMintInList = confirmed.some((l: Launch) => l.mintAddress === cur)
+      if (cur && !ourMintInList) return
       if (!cur || (prevNewestRef.current && prevNewestRef.current !== newest.mintAddress)) {
         setSelectedMint(newest.mintAddress!)
         setMintInput('')
@@ -267,10 +203,10 @@ export default function Trading() {
   const fetchBalances = useCallback(async () => {
     const mint = selectedMint || mintInput
     if (!mint || mint.length < 32) { setWalletBalances([]); return }
-    // If we have a selectedMint (from our launches) but launches haven't loaded yet,
-    // wait — otherwise we'd fetch with no launchId and get ALL wallets
-    const launch = launches.find(l => l.mintAddress === mint)
-    if (selectedMint && launches.length === 0) return
+    // Prefer launch from confirmed list; fall back to allLaunches (backend also looks up by mint)
+    const launch = launches.find((l: Launch) => l.mintAddress === mint)
+      ?? allLaunches.find((l: AllLaunch) => l.mintAddress === mint)
+    if (selectedMint && launches.length === 0 && allLaunches.length === 0) return
     setLoadingBalances(true)
     try {
       const res = await axios.post('/api/wallets/balances', {
@@ -280,7 +216,7 @@ export default function Trading() {
       setWalletBalances(res.data)
     } catch { setWalletBalances([]) }
     finally { setLoadingBalances(false) }
-  }, [selectedMint, mintInput, launches])
+  }, [selectedMint, mintInput, launches, allLaunches])
 
   useEffect(() => { fetchBalances() }, [fetchBalances])
 
@@ -308,7 +244,8 @@ export default function Trading() {
     if (esRef.current) esRef.current.close()
     setLiveTrades([]); setLiveError('')
 
-    const es = new EventSource(`/api/live-trades?mint=${mint}`)
+    const sessionId = localStorage.getItem(SESSION_KEY) || getOrCreateSessionId()
+    const es = new EventSource(`/api/live-trades?mint=${encodeURIComponent(mint)}&sessionId=${encodeURIComponent(sessionId)}`)
     esRef.current = es
     es.onmessage = (event) => {
       try {
@@ -356,16 +293,25 @@ export default function Trading() {
     const mint = activeMint
     if (!mint) return
     setSellingWalletId(walletId)
+    setRapidSellErrors([])
     try {
-      await axios.post('/api/trading/rapid-sell', {
+      const res = await axios.post('/api/trading/rapid-sell', {
         mint,
         percentage: pct,
         walletIds: [walletId],
         launchId: selectedLaunch?.id,
         parallel: true,
       })
+      const errs = (res.data?.results || [])
+        .filter((r: { status?: string; error?: string }) => r.status === 'error' && r.error)
+        .map((r: { wallet?: string; error?: string }) => `${r.wallet?.slice(0, 6) ?? '?'}...: ${r.error}`)
+      if (errs.length > 0) setRapidSellErrors(errs)
       await fetchBalances()
-    } catch (err: any) { console.error(err) }
+    } catch (err: any) {
+      console.error(err)
+      const msg = err?.response?.data?.error || err?.message || 'Sell failed'
+      setRapidSellErrors([msg])
+    }
     finally { setSellingWalletId(null) }
   }
 
@@ -414,29 +360,36 @@ export default function Trading() {
   // handleManualBuy moved into WalletCard component
 
   const fetchCreatorFeesAvailable = useCallback(async () => {
-    if (!selectedLaunch?.id) { setCreatorFeesAvailable(null); setDevSolForFees(null); return }
+    const launchId = selectedLaunch?.id
+    const mint = activeMint
+    if (!launchId && !mint) { setCreatorFeesAvailable(null); setDevSolForFees(null); return }
     try {
-      const res = await axios.get(`/api/trading/creator-fees-available?launchId=${selectedLaunch.id}`)
+      const url = launchId
+        ? `/api/trading/creator-fees-available?launchId=${launchId}`
+        : `/api/trading/creator-fees-available?mint=${encodeURIComponent(mint)}`
+      const res = await axios.get(url)
       setCreatorFeesAvailable(Number(res.data.availableSol ?? 0))
       setDevSolForFees(Number(res.data.devSol ?? 0))
     } catch {
       setCreatorFeesAvailable(null)
       setDevSolForFees(null)
     }
-  }, [selectedLaunch?.id])
+  }, [selectedLaunch?.id, activeMint])
 
   useEffect(() => {
     fetchCreatorFeesAvailable()
-    if (!selectedLaunch?.id) return
+    if (!selectedLaunch?.id && !activeMint) return
     const t = setInterval(fetchCreatorFeesAvailable, 30_000)
     return () => clearInterval(t)
-  }, [fetchCreatorFeesAvailable, selectedLaunch?.id])
+  }, [fetchCreatorFeesAvailable, selectedLaunch?.id, activeMint])
 
   const handleCollectCreatorFees = async () => {
-    if (!selectedLaunch?.id) return
+    const launchId = selectedLaunch?.id
+    const mint = activeMint
+    if (!launchId && !mint) return
     setCollectingFees(true); setCollectFeesMsg('')
     try {
-      const res = await axios.post('/api/trading/collect-creator-fees', { launchId: selectedLaunch.id })
+      const res = await axios.post('/api/trading/collect-creator-fees', launchId ? { launchId } : { mint })
       if (res.data?.status === 'confirmed') {
         const collected = Number(res.data.collectedSol || 0).toFixed(6)
         const swept = Number(res.data.sweptSol || 0)
@@ -456,11 +409,13 @@ export default function Trading() {
   }
 
   const handleCollectFeesOnly = async () => {
-    if (!selectedLaunch?.id) return
+    const launchId = selectedLaunch?.id
+    const mint = activeMint
+    if (!launchId && !mint) return
     setClosingOut(true)
     setCloseoutResult(null)
     try {
-      const feeRes = await axios.post('/api/trading/collect-creator-fees', { launchId: selectedLaunch.id })
+      const feeRes = await axios.post('/api/trading/collect-creator-fees', launchId ? { launchId } : { mint })
       const collected = feeRes.data?.status === 'confirmed' ? Number(feeRes.data.collectedSol || 0) : 0
       setCloseoutResult({ fees: collected, recovered: 0, errors: collected > 0 ? 0 : 1 })
       fetchCreatorFeesAvailable()
@@ -472,7 +427,7 @@ export default function Trading() {
 
   const handleCloseOutRun = async () => {
     if (!activeMint || !walletBalances.length) return
-    if (!confirm('Sell remaining tokens, collect creator fees, and sweep all SOL back to funding?')) return
+    if (!confirm('Sell from all wallets → Collect dev fee → Send all SOL to funding. Continue?')) return
     setClosingOut(true)
     setCloseoutResult(null)
     let feesCollected = 0
@@ -488,13 +443,14 @@ export default function Trading() {
         } catch { /* continue to collect + sweep */ }
         await new Promise(r => setTimeout(r, 2000))
       }
-      if (selectedLaunch?.id) {
+      if (selectedLaunch?.id || activeMint) {
         try {
-          const feeRes = await axios.post('/api/trading/collect-creator-fees', { launchId: selectedLaunch.id })
+          const feeRes = await axios.post('/api/trading/collect-creator-fees', selectedLaunch?.id ? { launchId: selectedLaunch.id } : { mint: activeMint })
           if (feeRes.data?.status === 'confirmed') feesCollected = Number(feeRes.data.collectedSol || 0)
         } catch { /* ignore */ }
       }
-      const gatherRes = await axios.post('/api/wallets/gather', { launchId: selectedLaunch?.id || undefined })
+      const launchIdForGather = selectedLaunch?.id || allLaunches.find((l: AllLaunch) => l.mintAddress === activeMint)?.id
+      const gatherRes = await axios.post('/api/wallets/gather', launchIdForGather ? { launchId: launchIdForGather } : activeMint ? { mint: activeMint } : {})
       totalRecovered = gatherRes.data?.totalRecovered || 0
       errors = (gatherRes.data?.wallets || []).filter((w: { error?: string }) => w.error).length
       setCloseoutResult({ fees: feesCollected, recovered: totalRecovered, errors })
@@ -509,7 +465,8 @@ export default function Trading() {
     setClosingOut(true)
     setCloseoutResult(null)
     try {
-      const gatherRes = await axios.post('/api/wallets/gather', { launchId: selectedLaunch?.id || undefined })
+      const launchIdForGather = selectedLaunch?.id || allLaunches.find((l: AllLaunch) => l.mintAddress === activeMint)?.id
+      const gatherRes = await axios.post('/api/wallets/gather', launchIdForGather ? { launchId: launchIdForGather } : activeMint ? { mint: activeMint } : {})
       const totalRecovered = gatherRes.data?.totalRecovered || 0
       const errors = (gatherRes.data?.wallets || []).filter((w: { error?: string }) => w.error).length
       setCloseoutResult({ fees: 0, recovered: totalRecovered, errors })
@@ -539,6 +496,7 @@ export default function Trading() {
       setLaunchError(null)
       setLaunchResult(null)
       setActiveLaunchId(launchId)
+      launchSuccessRef.current = false
       setSelectedMint('')
       setMintInput('')
       setWalletBalances([])
@@ -552,6 +510,7 @@ export default function Trading() {
         const data = JSON.parse(event.data)
         if (data.stage === 'done') {
           launchInProgressRef.current = false
+          launchSuccessRef.current = true
           setLaunchResult({ signature: data.signature, mint: data.mint })
           setLaunchStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'done' } : s))
           if (data.mint) setSelectedMint(data.mint)
@@ -570,7 +529,7 @@ export default function Trading() {
       }
       es.onerror = () => {
         launchInProgressRef.current = false
-        setLaunchError('Connection to launch stream lost')
+        if (!launchSuccessRef.current) setLaunchError('Connection to launch stream lost')
         es.close()
         launchEsRef.current = null
       }
@@ -700,9 +659,10 @@ export default function Trading() {
             onChange={e => {
               const v = e.target.value
               setMintInput(v)
-              if (v.length >= 32) setSelectedMint('')
+              if (v.length >= 32) { lastCompletedMintRef.current = null; setSelectedMint('') }
               else if (v === '') {
                 // Cleared input — revert to newest launch
+                lastCompletedMintRef.current = null
                 const newest = launches[launches.length - 1]
                 if (newest?.mintAddress) { setSelectedMint(newest.mintAddress) }
               }
@@ -739,7 +699,7 @@ export default function Trading() {
         launchError={launchError}
         launchResult={launchResult}
         actionResult={closeoutResult}
-        onDismissLaunch={() => { setLaunchStages([]); setLaunchError(null); setLaunchResult(null); setActiveLaunchId(null) }}
+        onDismissLaunch={() => { setLaunchStages([]); setLaunchError(null); setLaunchResult(null); setActiveLaunchId(null); launchSuccessRef.current = false }}
         onDismissResult={() => setCloseoutResult(null)}
       />
 
@@ -848,19 +808,51 @@ export default function Trading() {
 
             <div style={{ flex: 1 }} />
 
-            {/* Smart Action Split Button */}
-            <SmartActionButton
-              closingOut={closingOut}
-              activeMint={activeMint}
-              showCloseoutButton={!!showCloseoutButton}
-              totalTokens={totalTokens}
-              maxTotalTokens={maxTotalTokens}
-              selectedLaunchId={selectedLaunch?.id}
-              onCollectFees={handleCollectFeesOnly}
-              onCollectCreatorFees={handleCollectCreatorFees}
-              onCloseOut={handleCloseOutRun}
-              onSweep={handleSweepToFunding}
+            <Tip
+              text={`Collect Fees: Claim creator fees only — no selling or sweeping.
+
+Close Out Run: Sell from all wallets → collect dev fee → send all SOL to funding.
+
+Sweep to Funding: Move all SOL from wallets back to funding.`}
+              width={320}
             />
+
+            {/* Separate action buttons */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                disabled={closingOut || !activeMint}
+                onClick={handleCollectCreatorFees}
+                title="Claim creator fees only — no selling or sweeping"
+                style={{
+                  fontSize: 10, fontWeight: 700, padding: '6px 14px', borderRadius: 6,
+                  border: '1px solid rgba(52,211,153,0.3)', background: 'rgba(52,211,153,0.12)', color: '#34d399',
+                  cursor: closingOut || !activeMint ? 'not-allowed' : 'pointer', opacity: closingOut || !activeMint ? 0.5 : 1,
+                }}>
+                {closingOut ? 'Collecting...' : 'Collect Fees'}
+              </button>
+              <button
+                disabled={closingOut || !activeMint || !walletBalances.length}
+                onClick={handleCloseOutRun}
+                title="Sell from all wallets → Collect dev fee → Send all SOL to funding"
+                style={{
+                  fontSize: 10, fontWeight: 700, padding: '6px 14px', borderRadius: 6,
+                  border: '1px solid rgba(20,184,166,0.3)', background: 'rgba(20,184,166,0.15)', color: '#14b8a6',
+                  cursor: closingOut || !activeMint || !walletBalances.length ? 'not-allowed' : 'pointer', opacity: closingOut || !activeMint || !walletBalances.length ? 0.5 : 1,
+                }}>
+                {closingOut ? 'Closing Out...' : 'Close Out Run'}
+              </button>
+              <button
+                disabled={closingOut}
+                onClick={handleSweepToFunding}
+                title="Move all SOL from wallets back to funding"
+                style={{
+                  fontSize: 10, fontWeight: 700, padding: '6px 14px', borderRadius: 6,
+                  border: '1px solid rgba(129,140,248,0.3)', background: 'rgba(99,102,241,0.12)', color: '#818cf8',
+                  cursor: closingOut ? 'not-allowed' : 'pointer', opacity: closingOut ? 0.5 : 1,
+                }}>
+                {closingOut ? 'Sweeping...' : 'Sweep to Funding'}
+              </button>
+            </div>
           </div>
         )}
 
@@ -904,7 +896,7 @@ export default function Trading() {
       <LaunchHistory
         launches={allLaunches}
         selectedMint={selectedMint}
-        onSelect={(mint) => { setSelectedMint(mint); setMintInput('') }}
+        onSelect={(mint) => { lastCompletedMintRef.current = null; setSelectedMint(mint); setMintInput('') }}
         onDelete={handleDeleteLaunch}
       />
     </div>

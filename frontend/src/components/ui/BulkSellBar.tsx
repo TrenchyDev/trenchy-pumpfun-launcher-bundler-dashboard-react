@@ -82,8 +82,11 @@ export default function BulkSellBar({
         )}
       </div>
       {rapidSellErrors.length > 0 && (
-        <div style={{ marginTop: 4, fontSize: 9, color: '#fb7185', lineHeight: 1.4 }}>
-          {rapidSellErrors.map((e, i) => <span key={i} style={{ marginRight: 8 }}>{e}</span>)}
+        <div style={{
+          marginTop: 8, padding: '8px 12px', fontSize: 11, color: '#fb7185', lineHeight: 1.5,
+          background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: 6,
+        }}>
+          <strong>Sell failed:</strong> {rapidSellErrors.map((e, i) => <span key={i}>{e}{i < rapidSellErrors.length - 1 ? '; ' : ''}</span>)}
         </div>
       )}
     </div>
