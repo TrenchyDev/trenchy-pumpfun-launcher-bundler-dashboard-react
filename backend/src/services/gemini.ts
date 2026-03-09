@@ -15,6 +15,9 @@ export interface TokenMetadata {
   name: string;
   symbol: string;
   description: string;
+  website?: string;
+  twitter?: string;
+  telegram?: string;
 }
 
 const METADATA_SYSTEM = `You are a memecoin token namer. Given a short concept or theme, output ONLY valid JSON with exactly these keys (no markdown, no code block):
@@ -22,14 +25,22 @@ const METADATA_SYSTEM = `You are a memecoin token namer. Given a short concept o
 - "symbol": Ticker, 2-8 uppercase letters, no spaces.
 - "description": One or two punchy sentences for the token description. Memecoin vibe, not corporate.`;
 
-export async function generateTokenMetadata(prompt: string): Promise<TokenMetadata> {
+const METADATA_SYSTEM_WITH_LINKS = METADATA_SYSTEM + `
+
+If "generateDummyLinks" is true, also include these keys with placeholder URLs (fake but realistic-looking):
+- "website": A dummy URL like https://example-token.io or https://tokenname.xyz
+- "twitter": A dummy Twitter/X URL like https://x.com/tokenname_official
+- "telegram": A dummy Telegram URL like https://t.me/tokenname_official`;
+
+export async function generateTokenMetadata(prompt: string, generateDummyLinks = false): Promise<TokenMetadata> {
   const ai = getClient();
+  const system = generateDummyLinks ? METADATA_SYSTEM_WITH_LINKS : METADATA_SYSTEM;
   const res = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: [
       {
         role: 'user',
-        parts: [{ text: `${METADATA_SYSTEM}\n\nConcept: ${prompt}` }],
+        parts: [{ text: `${system}\n\nConcept: ${prompt}${generateDummyLinks ? '\n\ngenerateDummyLinks: true' : ''}` }],
       },
     ],
   });
@@ -38,11 +49,17 @@ export async function generateTokenMetadata(prompt: string): Promise<TokenMetada
   const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```\s*$/i, '').trim();
   const parsed = JSON.parse(cleaned) as TokenMetadata;
   if (!parsed.name || !parsed.symbol) throw new Error('Invalid metadata: missing name or symbol');
-  return {
+  const result: TokenMetadata = {
     name: String(parsed.name).trim(),
     symbol: String(parsed.symbol).trim().toUpperCase().slice(0, 10),
     description: String(parsed.description ?? '').trim(),
   };
+  if (generateDummyLinks) {
+    if (parsed.website) result.website = String(parsed.website).trim();
+    if (parsed.twitter) result.twitter = String(parsed.twitter).trim();
+    if (parsed.telegram) result.telegram = String(parsed.telegram).trim();
+  }
+  return result;
 }
 
 const IMAGE_STYLE_RULES = `CRITICAL RULES:
@@ -68,11 +85,20 @@ Output: One square image, mascot/avatar style, centered, bold, no text.`;
 
   const parts: { text?: string; inlineData?: { data: string; mimeType: string } }[] = [];
   if (referenceImage) {
+    // Lead with strong instruction so the model treats the image as PRIMARY source
+    parts.push({
+      text: `CRITICAL: The next image is your PRIMARY reference. You MUST create a token logo that depicts THE SAME subject, character, or scene shown in that image. Do NOT invent a different subject. Do NOT ignore the image. Simplify and stylize it for a token logo.\n\n`,
+    });
     parts.push({
       inlineData: { data: referenceImage.base64, mimeType: referenceImage.mimeType },
     });
     parts.push({
-      text: `Use this image as visual reference. Do not copy it exactly — turn it into a clean token logo following the rules below. Same subject/style, simplified and stylized.\n\n${imagePrompt}`,
+      text: `${IMAGE_STYLE_RULES}
+
+Token name: "${tokenName}".
+${prompt ? `Additional style hints: ${prompt}` : ''}
+
+Output: One square image, same subject as the reference, mascot/avatar style, centered, bold, no text.`,
     });
   } else {
     parts.push({ text: imagePrompt });

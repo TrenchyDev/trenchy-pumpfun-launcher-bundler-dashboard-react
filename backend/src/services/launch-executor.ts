@@ -268,8 +268,9 @@ export async function uploadMetadataToIpfs(params: {
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       const msg = err instanceof Error ? err.message : String(err);
-      if (attempt < maxRetries && status === 500) {
-        console.warn(`[Launch] pump.fun IPFS 500, retry ${attempt}/${maxRetries}...`);
+      const isRetryable = status === 500 || status === 502 || status === 503;
+      if (attempt < maxRetries && isRetryable) {
+        console.warn(`[Launch] pump.fun IPFS ${status}, retry ${attempt}/${maxRetries}...`);
         await new Promise(r => setTimeout(r, 2000 * attempt));
         continue;
       }
@@ -615,7 +616,6 @@ export async function executeLaunch(
         }
 
         // Bundle was accepted — immediately start auto-sell spam (don't await)
-        // It will retry every 400ms until the block lands and sells succeed
         if (params.autoSellAfterLaunch && !autoSellPromise) {
           const sellWallets = buildSellWalletList(walletBuyData);
           if (sellWallets.length > 0) {
