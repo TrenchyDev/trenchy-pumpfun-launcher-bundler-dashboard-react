@@ -9,13 +9,16 @@ router.post('/presubscribe', async (req: Request, res: Response) => {
   if (!mint || typeof mint !== 'string' || mint.length < 32) {
     return res.status(400).json({ error: 'valid mint address required' });
   }
-  await tracker.subscribe(mint, undefined, req.sessionId);
+  await tracker.subscribe(mint, undefined, req.sessionId || undefined);
   res.json({ status: 'subscribed', mint });
 });
 
 router.get('/', async (req: Request, res: Response) => {
   const mint = String(req.query.mint || '');
   if (!mint) return res.status(400).json({ error: 'mint query param required' });
+  // EventSource cannot send custom headers; use sessionId from query as fallback
+  const sessionId = (req.headers['x-session-id'] as string)?.trim()
+    || (typeof req.query.sessionId === 'string' ? req.query.sessionId.trim() : undefined);
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -24,7 +27,7 @@ router.get('/', async (req: Request, res: Response) => {
     'Access-Control-Allow-Origin': '*',
   });
 
-  await tracker.subscribe(mint, undefined, req.sessionId);
+  await tracker.subscribe(mint, undefined, sessionId || undefined);
 
   // Small delay to let any cached trades arrive
   setTimeout(() => {

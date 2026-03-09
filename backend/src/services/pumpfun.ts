@@ -188,7 +188,6 @@ export async function buildBundleBuyIxs(
   });
 
   // Use only 80% of expected tokens as minimum (very conservative, matches old bundler).
-  // This ensures the buy succeeds even if our offline simulation is slightly inaccurate.
   const safeTokenAmount = tokenAmount.muln(8).divn(10);
 
   // Max SOL = wallet's funded balance minus a small rent reserve (matches old bundler

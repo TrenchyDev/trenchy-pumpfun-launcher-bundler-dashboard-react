@@ -34,7 +34,7 @@ let cachedTipAccountsAt = 0;
 const TIP_CACHE_TTL_MS = 60_000;
 
 const COOLDOWN_FILE = path.join(__dirname, '../../data/.jito-cooldown.json');
-const COOLDOWN_SECONDS = 60;
+const COOLDOWN_SECONDS = Number(process.env.JITO_COOLDOWN_SECONDS) || 60;
 
 function checkCooldown(): number {
   try {
@@ -225,9 +225,8 @@ export async function submitBundle(
   const serialized = transactions.map(tx => bs58.encode(tx.serialize()));
   const firstTxSig = bs58.encode(transactions[0].signatures[0]);
 
-  // Multi-endpoint race: hit all endpoints each round, first success wins
+  // Multi-endpoint race: hit all endpoints each round, first success wins (full 5 retries per endpoint)
   const MAX_ROUNDS = 3;
-
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const shuffled = [...JITO_ENDPOINTS].sort(() => Math.random() - 0.5);
     console.log(`[Jito] Round ${round + 1}: sending ${serialized.length} tx(s) to ${shuffled.length} endpoint(s)`);

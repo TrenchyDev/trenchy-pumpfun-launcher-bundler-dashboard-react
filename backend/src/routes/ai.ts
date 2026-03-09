@@ -23,6 +23,7 @@ router.post('/generate-token', upload.single('image'), async (req: Request, res:
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
   }
+  const generateDummyLinks = req.body?.generateDummyLinks === 'true' || req.body?.generateDummyLinks === true;
 
   let referenceImage: { base64: string; mimeType: string } | undefined;
   if (req.file && req.file.buffer.length > 0) {
@@ -33,7 +34,7 @@ router.post('/generate-token', upload.single('image'), async (req: Request, res:
   }
 
   try {
-    const metadata = await gemini.generateTokenMetadata(prompt);
+    const metadata = await gemini.generateTokenMetadata(prompt, generateDummyLinks);
     let imageBuffer: Buffer | null = null;
     try {
       imageBuffer = await gemini.generateTokenImage(prompt, metadata.name, referenceImage);
@@ -45,6 +46,9 @@ router.post('/generate-token', upload.single('image'), async (req: Request, res:
         symbol: metadata.symbol,
         description: metadata.description,
         imageUrl: '',
+        website: metadata.website,
+        twitter: metadata.twitter,
+        telegram: metadata.telegram,
       });
     }
 
@@ -59,6 +63,9 @@ router.post('/generate-token', upload.single('image'), async (req: Request, res:
       symbol: metadata.symbol,
       description: metadata.description,
       imageUrl,
+      website: metadata.website,
+      twitter: metadata.twitter,
+      telegram: metadata.telegram,
     });
   } catch (err: any) {
     console.error('[AI] generate-token error:', err?.message || err);

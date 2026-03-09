@@ -1,6 +1,18 @@
 import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
 import * as vault from '../services/vault';
 import * as solana from '../services/solana';
+
+const LAUNCHES_FILE = path.join(__dirname, '../../data/launches.json');
+function findLaunchByMint(mint: string): string | undefined {
+  if (!fs.existsSync(LAUNCHES_FILE)) return undefined;
+  try {
+    const launches = JSON.parse(fs.readFileSync(LAUNCHES_FILE, 'utf8') || '[]');
+    const launch = launches.find((l: { mintAddress?: string }) => l.mintAddress === mint);
+    return launch?.id;
+  } catch { return undefined; }
+}
 import { fundingMiddleware, FundingRequest } from '../middleware/funding';
 import {
   PublicKey, LAMPORTS_PER_SOL, SystemProgram,
@@ -166,8 +178,14 @@ router.post('/:id/fund', fundingMiddleware, async (req: FundingRequest, res: Res
 });
 
 router.post('/balances', async (req: Request, res: Response) => {
-  const { mint, launchId } = req.body;
+  let { mint, launchId } = req.body;
   if (!mint) return res.status(400).json({ error: 'mint required' });
+
+  // When no launchId, try to find launch by mint — avoids fetching 300+ wallets and 429 rate limits
+  if (!launchId) {
+    const found = findLaunchByMint(mint);
+    if (found) launchId = found;
+  }
 
   const mintPubkey = new PublicKey(mint);
   const conn = solana.getConnection();
@@ -176,6 +194,11 @@ router.post('/balances', async (req: Request, res: Response) => {
   let wallets = await vault.listWallets({}, req.sessionId);
   if (launchId) {
     wallets = wallets.filter(w => w.launchId === String(launchId));
+  } else {
+    // No launchId: only check wallets assigned to launches, most recent first (avoids 313-wallet 429 storm)
+    wallets = wallets.filter(w => w.launchId && (w.type === 'dev' || w.type === 'bundle' || w.type === 'holder'));
+    wallets.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    if (wallets.length > 60) wallets = wallets.slice(0, 60);
   }
   wallets = wallets.filter(w => w.type === 'dev' || w.type === 'bundle' || w.type === 'holder');
 
@@ -199,6 +222,7 @@ router.post('/balances', async (req: Request, res: Response) => {
   console.log(`[balances] Fetching token balances for ${wallets.length} wallets, mint=${mint}`);
 
   for (let i = 0; i < wallets.length; i++) {
+    if (i > 0 && wallets.length > 10) await new Promise(r => setTimeout(r, 80));
     const w = wallets[i];
     const pubkey = new PublicKey(w.publicKey);
     try {
@@ -246,7 +270,9 @@ router.post('/balances', async (req: Request, res: Response) => {
 router.post('/gather', fundingMiddleware, async (req: FundingRequest, res: Response) => {
   const fundingKp = solana.getFundingKeypair(req.fundingKeypair!);
   const fundingPk = fundingKp.publicKey.toBase58();
-  const launchId = typeof req.body?.launchId === 'string' ? req.body.launchId : undefined;
+  let launchId = typeof req.body?.launchId === 'string' ? req.body.launchId : undefined;
+  const mint = typeof req.body?.mint === 'string' ? req.body.mint : undefined;
+  if (!launchId && mint) launchId = findLaunchByMint(mint);
   let wallets = (await vault.listWallets({ status: 'active' }, req.sessionId)).filter(w => w.type !== 'funding');
   if (launchId) {
     wallets = wallets.filter(w => w.launchId === launchId);
