@@ -2,6 +2,8 @@
 
 https://github.com/user-attachments/assets/c05d9e75-c6e4-484d-85cf-d374f3c3d022
 
+**Next-gen pump.fun token launcher on Solana.** Jito bundles, Token-2022, AI metadata & images, live trades, rapid sell. [trenchytools.lol](https://trenchytools.lol)
+
 The next-generation Solana token launcher for pump.fun. Built from the ground up on the official `@pump-fun/pump-sdk` with Jito bundle support, real-time trade tracking, AI token generation, and a wallet vault.
 
 Launch tokens, manage wallets, execute trades, and collect creator fees — all from a single dashboard.
