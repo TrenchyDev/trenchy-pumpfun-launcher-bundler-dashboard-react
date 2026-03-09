@@ -66,8 +66,8 @@ const fmtNum = (n: number) => {
   return String(n)
 }
 
-const DEV_PRESETS = [0.1, 0.25, 0.5, 1.0, 1.5, 2.0]
-const BUNDLE_PRESETS = [0.1, 0.25, 0.5, 1.0]
+const DEV_PRESETS = [0.1, 0.2, 0.25, 0.5, 1.0, 1.5, 2.0]
+const BUNDLE_PRESETS = [0.01, 0.1, 0.25, 0.5, 1.0]
 const HOLDER_PRESETS = [0.1, 0.25, 0.5, 1.0]
 
 export default function Launch() {
@@ -80,9 +80,9 @@ export default function Launch() {
     website: '',
     twitter: '',
     telegram: '',
-    devBuyAmount: 0.5,
-    bundleWalletCount: 4,
-    bundleSwapAmounts: [0.5, 0.5, 0.5, 0.5],
+    devBuyAmount: 2,
+    bundleWalletCount: 2,
+    bundleSwapAmounts: [0.01, 0.01],
     holderWalletCount: 0,
     holderSwapAmounts: [],
     holderAutoBuy: false,
@@ -90,7 +90,7 @@ export default function Launch() {
     useJito: true,
     useLUT: false,
     strictBundle: true,
-    autoSellAfterLaunch: false,
+    autoSellAfterLaunch: true,
     mintAddressMode: (localStorage.getItem('mintAddressMode') as 'random' | 'vanity') || 'random',
     vanityMintPublicKey: '',
     devWalletId: '',
@@ -110,6 +110,8 @@ export default function Launch() {
   const [vanityAddresses, setVanityAddresses] = useState<VanityAddress[]>([])
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiGenerating, setAiGenerating] = useState(false)
+  const [aiGenerateDummyLinks, setAiGenerateDummyLinks] = useState(false)
+  const [addTrenchyTagline, setAddTrenchyTagline] = useState(true)
   const [aiRefFile, setAiRefFile] = useState<File | null>(null)
   const [aiRefPreview, setAiRefPreview] = useState<string | null>(null)
   const aiRefInputRef = useRef<HTMLInputElement>(null)
@@ -202,14 +204,15 @@ export default function Launch() {
     try {
       const formData = new FormData()
       formData.append('prompt', prompt)
+      if (aiGenerateDummyLinks) formData.append('generateDummyLinks', 'true')
       if (aiRefFile) formData.append('image', aiRefFile)
-      const res = await axios.post<{ name: string; symbol: string; description: string; imageUrl: string }>(
+      const res = await axios.post<{ name: string; symbol: string; description: string; imageUrl: string; website?: string; twitter?: string; telegram?: string }>(
         '/api/ai/generate-token',
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' } },
       )
-      const { name, symbol, description, imageUrl } = res.data
-      updateForm({ tokenName: name, tokenSymbol: symbol, description, imageUrl })
+      const { name, symbol, description, imageUrl, website, twitter, telegram } = res.data
+      updateForm({ tokenName: name, tokenSymbol: symbol, description, imageUrl, website: website ?? '', twitter: twitter ?? '', telegram: telegram ?? '' })
       if (imageUrl) setImagePreview(imageUrl)
     } catch (err: unknown) {
       const msg = err && typeof err === 'object' && 'response' in err && typeof (err as any).response?.data?.error === 'string'
@@ -219,7 +222,7 @@ export default function Launch() {
     } finally {
       setAiGenerating(false)
     }
-  }, [aiPrompt, aiGenerating, aiRefFile])
+  }, [aiPrompt, aiGenerating, aiRefFile, aiGenerateDummyLinks])
 
   const setAiRef = (file: File | null) => {
     if (aiRefPreview) URL.revokeObjectURL(aiRefPreview)
@@ -264,11 +267,12 @@ export default function Launch() {
       website: 'https://trenchytools.lol/',
       twitter: 'https://x.com/dogtoshi_x',
       telegram: 'https://github.com/TrenchyDev/trenchy-pumpfun-launcher-bundler-dashboard-react',
-      devBuyAmount: 0.1,
+      devBuyAmount: 2,
       bundleWalletCount: 2,
-      bundleSwapAmounts: [0.1, 0.1],
+      bundleSwapAmounts: [0.01, 0.01],
       holderWalletCount: 0,
       holderSwapAmounts: [],
+      autoSellAfterLaunch: true,
     })
   }
 
@@ -406,8 +410,12 @@ export default function Launch() {
     setError(null)
 
     try {
+      const description = addTrenchyTagline && form.description
+        ? `${form.description.trim()}\n\n\nLaunched with https://trenchytools.lol/`
+        : form.description
       const payload = {
         ...form,
+        description,
         devWalletId: form.devWalletId || undefined,
         bundleWalletIds: form.bundleWalletIds.some(Boolean) ? form.bundleWalletIds : undefined,
         holderWalletIds: form.holderWalletIds.some(Boolean) ? form.holderWalletIds : undefined,
@@ -561,6 +569,10 @@ export default function Launch() {
                 ) : (
                   <button type="button" className="btn-ghost" style={{ padding: '2px 6px', fontSize: 9, color: '#475569' }} onClick={() => aiRefInputRef.current?.click()}>ref</button>
                 )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, color: '#64748b', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={aiGenerateDummyLinks} onChange={e => setAiGenerateDummyLinks(e.target.checked)} style={{ width: 12, height: 12 }} />
+                  dummy links
+                </label>
                 <input
                   className="input"
                   style={{ width: 150, padding: '3px 6px', fontSize: 10 }}
@@ -642,6 +654,10 @@ export default function Launch() {
               <label className="label">Description</label>
               <textarea className="input" style={{ padding: '8px 10px', fontSize: 12, minHeight: 56 }} placeholder="Token description..."
                 value={form.description} onChange={e => updateForm({ description: e.target.value })} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 11, color: '#64748b', cursor: 'pointer' }}>
+                <input type="checkbox" checked={addTrenchyTagline} onChange={e => setAddTrenchyTagline(e.target.checked)} style={{ width: 14, height: 14 }} />
+                Add &quot;Launched with https://trenchytools.lol/&quot; at end of description
+              </label>
             </div>
             {/* Links — enter any URL; we route to the correct pump.fun field by domain */}
             <div style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -938,9 +954,11 @@ export default function Launch() {
                   </div>
                 </div>
               </div>
-              {form.description && (
-                <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 12, lineHeight: 1.5 }}>
-                  {form.description}
+              {(form.description || addTrenchyTagline) && (
+                <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 12, lineHeight: 1.5, whiteSpace: 'pre-line' }}>
+                  {addTrenchyTagline && form.description
+                    ? `${form.description.trim()}\n\n\nLaunched with https://trenchytools.lol/`
+                    : form.description}
                 </p>
               )}
             </div>

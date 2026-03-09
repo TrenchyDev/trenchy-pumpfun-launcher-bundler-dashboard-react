@@ -40,7 +40,7 @@ export default function Settings() {
   const [fundingError, setFundingError] = useState<string | null>(null)
   const [fundingLoading, setFundingLoading] = useState(false)
 
-  const [overrides, setOverrides] = useState<{ rpcEndpoint: string; birdeyeApiKey: string; jitoTipLamports: string }>({ rpcEndpoint: '', birdeyeApiKey: '', jitoTipLamports: '' })
+  const [overrides, setOverrides] = useState<{ rpcEndpoint: string; birdeyeApiKey: string; jitoTipSol: string }>({ rpcEndpoint: '', birdeyeApiKey: '', jitoTipSol: '' })
   const [overridesDirty, setOverridesDirty] = useState(false)
   const [overridesSaved, setOverridesSaved] = useState(false)
 
@@ -53,11 +53,14 @@ export default function Settings() {
   const [birdeyeConfigured, setBirdeyeConfigured] = useState(false)
 
   useEffect(() => {
-    axios.get('/api/env/overrides').then(r => {
+    const sessionId = localStorage.getItem(SESSION_KEY) || getOrCreateSessionId()
+    axios.get('/api/env/overrides', { headers: { 'X-Session-Id': sessionId } }).then(r => {
+      const lamports = r.data.jitoTipLamports
+      const solStr = lamports != null && !isNaN(lamports) ? (lamports / 1e9).toString() : ''
       setOverrides({
         rpcEndpoint: r.data.rpcEndpoint ?? '',
         birdeyeApiKey: '',
-        jitoTipLamports: r.data.jitoTipLamports != null ? String(r.data.jitoTipLamports) : '',
+        jitoTipSol: solStr,
       })
       setBirdeyeConfigured(r.data.birdeyeApiKeySet === true)
     }).catch(() => {})
@@ -85,13 +88,15 @@ export default function Settings() {
     setError(null)
     setOverridesSaved(false)
     try {
-      const jitoStr = overrides.jitoTipLamports.trim()
-      const jitoNum = jitoStr ? parseInt(jitoStr, 10) : null
+      const sessionId = localStorage.getItem(SESSION_KEY) || getOrCreateSessionId()
+      const jitoStr = overrides.jitoTipSol.trim()
+      const solNum = jitoStr ? parseFloat(jitoStr) : NaN
+      const lamports = !jitoStr ? null : (!isNaN(solNum) && solNum >= 0 ? Math.round(solNum * 1e9) : undefined)
       await axios.put('/api/env/overrides', {
         rpcEndpoint: overrides.rpcEndpoint.trim() || undefined,
         birdeyeApiKey: overrides.birdeyeApiKey.trim() || undefined,
-        jitoTipLamports: !jitoStr ? null : (jitoNum != null && !isNaN(jitoNum) ? jitoNum : undefined),
-      })
+        jitoTipLamports: lamports,
+      }, { headers: { 'X-Session-Id': sessionId } })
       setOverridesDirty(false)
       setBirdeyeConfigured(!!overrides.birdeyeApiKey.trim())
       setOverridesSaved(true)
@@ -450,9 +455,12 @@ export default function Settings() {
               type="text"
               value={overrides.rpcEndpoint}
               onChange={e => { setOverrides(o => ({ ...o, rpcEndpoint: e.target.value })); setOverridesDirty(true) }}
-              placeholder="Leave empty to use server RPC. Or paste your own Alchemy/Helius URL..."
+              placeholder="Leave empty to use RPC from backend/.env (RPC_ENDPOINT). Or paste your own Alchemy/Helius URL..."
               style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 13 }}
             />
+            {!overrides.rpcEndpoint.trim() && (
+              <p style={{ fontSize: 11, color: '#64748b', marginTop: 6, marginBottom: 0 }}>Using: server RPC from backend/.env</p>
+            )}
           </div>
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Birdeye API Key (optional)</label>
@@ -466,13 +474,13 @@ export default function Settings() {
             />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Jito Tip (lamports)</label>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#94a3b8', marginBottom: 6 }}>Jito Tip (SOL)</label>
             <input
               className="input"
               type="text"
-              value={overrides.jitoTipLamports}
-              onChange={e => { setOverrides(o => ({ ...o, jitoTipLamports: e.target.value })); setOverridesDirty(true) }}
-              placeholder="e.g. 5000000 (leave empty for default)"
+              value={overrides.jitoTipSol}
+              onChange={e => { setOverrides(o => ({ ...o, jitoTipSol: e.target.value })); setOverridesDirty(true) }}
+              placeholder="e.g. 0.005 (leave empty for default)"
               style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 13 }}
             />
           </div>

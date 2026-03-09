@@ -37,7 +37,7 @@ export default function Tip({ text, width = 220 }: Props) {
         padding: '8px 12px', borderRadius: 8,
         background: '#1e293b', border: '1px solid rgba(51,65,85,0.8)',
         color: '#cbd5e1', fontSize: 11, lineHeight: 1.5,
-        whiteSpace: 'normal', width, zIndex: 99999,
+        whiteSpace: 'pre-line', width, zIndex: 99999,
         boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
         pointerEvents: 'none',
       }}>

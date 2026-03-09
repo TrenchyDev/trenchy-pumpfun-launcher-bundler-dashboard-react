@@ -215,7 +215,7 @@ export default function Wallets() {
     setCollectFeesResult(null)
     try {
       const res = await axios.get('/api/trading/all-unclaimed-fees')
-      setUnclaimedFees((res.data as UnclaimedFee[]).filter(f => f.availableSol >= 0.0001))
+      setUnclaimedFees((res.data as UnclaimedFee[]).filter(f => f.availableSol >= 0.0025))
     } catch (err: unknown) {
       console.error(err)
     } finally {
@@ -224,7 +224,7 @@ export default function Wallets() {
   }
 
   const handleCollectAllFees = async () => {
-    const withFees = unclaimedFees.filter(f => f.availableSol > 0)
+    const withFees = unclaimedFees.filter(f => f.availableSol >= 0.0025)
     if (withFees.length === 0) return
     setCollectingAllFees(true)
     setCollectFeesResult(null)
@@ -349,11 +349,11 @@ export default function Wallets() {
           <div>
             <h3 className="section-title" style={{ marginBottom: 2, display: 'flex', alignItems: 'center' }}>Creator Fees<Tip text="Pump.fun pays creator fees on every trade of your token. Scan to find unclaimed fees across all your launches, then collect them in bulk." /></h3>
             <p style={{ fontSize: 11, color: '#64748b', margin: 0 }}>
-              Scan all launches for unclaimed fees, collect and sweep to funding wallet
+              Scan all launches for unclaimed fees, collect and sweep to funding wallet. Fees below 0.0025 SOL are hidden.
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {unclaimedFees.filter(f => f.availableSol > 0).length > 0 && (
+            {unclaimedFees.filter(f => f.availableSol >= 0.0025).length > 0 && (
               <button className="btn-primary" style={{ fontSize: 12, padding: '8px 16px' }}
                 disabled={collectingAllFees}
                 onClick={handleCollectAllFees}>
